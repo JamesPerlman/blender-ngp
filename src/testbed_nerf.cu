@@ -13,6 +13,7 @@
  */
 
 #include <neural-graphics-primitives/adam_optimizer.h>
+#include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common_device.cuh>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/envmap.cuh>
@@ -1784,8 +1785,11 @@ __global__ void compact_kernel_nerf(
 __global__ void init_rays_with_payload_kernel_nerf(
 	uint32_t sample_index,
 	NerfPayload* __restrict__ payloads,
+	ECameraModel camera_model,
 	Vector2i resolution,
 	Vector2f focal_length,
+	SphericalQuadrilateral spherical_quadrilateral,
+	QuadrilateralHexahedron quadrilateral_hexahedron,
 	Matrix<float, 3, 4> camera_matrix0,
 	Matrix<float, 3, 4> camera_matrix1,
 	Vector4f rolling_shutter,
@@ -1828,22 +1832,56 @@ __global__ void init_rays_with_payload_kernel_nerf(
 	float u = (x + 0.5f) * (1.f / resolution.x());
 	float v = (y + 0.5f) * (1.f / resolution.y());
 	float ray_time = rolling_shutter.x() + rolling_shutter.y() * u + rolling_shutter.z() * v + rolling_shutter.w() * ld_random_val(sample_index, idx * 72239731);
-	Ray ray = pixel_to_ray(
-		sample_index,
-		{x, y},
-		resolution.cwiseQuotient(quilting_dims),
-		focal_length,
-		camera_matrix0 * ray_time + camera_matrix1 * (1.f - ray_time),
-		screen_center,
-		parallax_shift,
-		snap_to_pixel_centers,
-		near_distance,
-		plane_z,
-		aperture_size,
-		lens,
-		distortion_data,
-		distortion_resolution
-	);
+
+	const Eigen::Vector2i pixel = {x, y};
+	const Eigen::Vector2i res = resolution.cwiseQuotient(quilting_dims);
+	const Eigen::Matrix<float, 3, 4> camera_matrix = camera_matrix0 * ray_time + camera_matrix1 * (1.f - ray_time);
+
+	Ray ray = {{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+	switch (camera_model) {
+		case ECameraModel::Perspective:
+			ray = pixel_to_ray(
+				sample_index,
+				pixel,
+				res,
+				focal_length,
+				camera_matrix,
+				screen_center,
+				parallax_shift,
+				snap_to_pixel_centers,
+				near_distance,
+				plane_z,
+				aperture_size,
+				lens,
+				distortion_data,
+				distortion_resolution
+			);
+			break;
+		case ECameraModel::SphericalQuadrilateral:
+			ray = spherical_quadrilateral_pixel_to_ray(
+				sample_index,
+				pixel,
+				res,
+				camera_matrix,
+				spherical_quadrilateral,
+				near_distance,
+				plane_z,
+				aperture_size
+			);
+			break;
+		case ECameraModel::QuadrilateralHexahedron:
+			ray = quadrilateral_hexahedron_pixel_to_ray(
+				sample_index,
+				pixel,
+				res,
+				camera_matrix,
+				quadrilateral_hexahedron,
+				near_distance,
+				plane_z,
+				aperture_size
+			);
+			break;
+	}
 
 	NerfPayload& payload = payloads[idx];
 	payload.max_weight = 0.0f;
@@ -1966,8 +2004,11 @@ void Testbed::NerfTracer::init_rays_from_camera(
 	uint32_t sample_index,
 	uint32_t padded_output_width,
 	uint32_t n_extra_dims,
+	ECameraModel camera_model,
 	const Vector2i& resolution,
 	const Vector2f& focal_length,
+	const SphericalQuadrilateral& spherical_quadrilateral,
+	const QuadrilateralHexahedron& quadrilateral_hexahedron,
 	const Matrix<float, 3, 4>& camera_matrix0,
 	const Matrix<float, 3, 4>& camera_matrix1,
 	const Vector4f& rolling_shutter,
@@ -2002,8 +2043,11 @@ void Testbed::NerfTracer::init_rays_from_camera(
 	init_rays_with_payload_kernel_nerf<<<blocks, threads, 0, stream>>>(
 		sample_index,
 		m_rays[0].payload,
+		camera_model,
 		resolution,
 		focal_length,
+		spherical_quadrilateral,
+		quadrilateral_hexahedron,
 		camera_matrix0,
 		camera_matrix1,
 		rolling_shutter,
@@ -2263,8 +2307,11 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 		render_buffer.spp(),
 		m_network->padded_output_width(),
 		m_nerf_network->n_extra_dims(),
+		m_render_camera_model,
 		render_buffer.in_resolution(),
 		focal_length,
+		m_camera_spherical_quadrilateral,
+		m_camera_quadrilateral_hexahedron,
 		camera_matrix0,
 		camera_matrix1,
 		rolling_shutter,

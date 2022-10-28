@@ -15,6 +15,7 @@
 #pragma once
 
 #include <neural-graphics-primitives/adam_optimizer.h>
+#include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/camera_path.h>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/discrete_distribution.h>
@@ -135,8 +136,11 @@ public:
 			uint32_t spp,
 			uint32_t padded_output_width,
 			uint32_t n_extra_dims,
+			ECameraModel camera_model,
 			const Eigen::Vector2i& resolution,
 			const Eigen::Vector2f& focal_length,
+			const SphericalQuadrilateral& spherical_quadrilateral,
+			const QuadrilateralHexahedron& quadrilateral_hexahedron,
 			const Eigen::Matrix<float, 3, 4>& camera_matrix0,
 			const Eigen::Matrix<float, 3, 4>& camera_matrix1,
 			const Eigen::Vector4f& rolling_shutter,
@@ -500,6 +504,11 @@ public:
 
 	ERenderMode m_render_mode = ERenderMode::Shade;
 	EMeshRenderMode m_mesh_render_mode = EMeshRenderMode::VertexNormals;
+
+	// Camera model stuff
+	ECameraModel m_render_camera_model = ECameraModel::Perspective;
+	SphericalQuadrilateral m_camera_spherical_quadrilateral = SphericalQuadrilateral::Zero();
+	QuadrilateralHexahedron m_camera_quadrilateral_hexahedron = QuadrilateralHexahedron::Zero();
 
 	uint32_t m_seed = 1337;
 #ifdef NGP_GUI
