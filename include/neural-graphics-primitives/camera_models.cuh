@@ -72,14 +72,15 @@ inline NGP_HOST_DEVICE Ray quadrilateral_hexahedron_pixel_to_ray(
     Eigen::Vector2f uv = (pixel.cast<float>() + Eigen::Vector2f(0.5f, 0.5f)).array() / resolution.cast<float>().array();
     
     Eigen::Vector3f front_ab = qh.front.tl + uv.x() * (qh.front.tr - qh.front.tl);
-    Eigen::Vector3f front_dc = qh.front.br + uv.x() * (qh.front.br - qh.front.bl);
+    Eigen::Vector3f front_dc = qh.front.bl + uv.x() * (qh.front.br - qh.front.bl);
     Eigen::Vector3f front_p = front_ab + uv.y() * (front_dc - front_ab);
 
     Eigen::Vector3f back_ab = qh.back.tl + uv.x() * (qh.back.tr - qh.back.tl);
-    Eigen::Vector3f back_dc = qh.back.br + uv.x() * (qh.back.br - qh.back.bl);
+    Eigen::Vector3f back_dc = qh.back.bl + uv.x() * (qh.back.br - qh.back.bl);
     Eigen::Vector3f back_p = back_ab + uv.y() * (back_dc - back_ab);
 
     Eigen::Vector3f dir = front_p - back_p;
+	dir /= dir.z();
     Eigen::Vector3f origin = back_p;
 
 	origin = camera_matrix.block<3, 3>(0, 0) * origin + camera_matrix.col(3);
