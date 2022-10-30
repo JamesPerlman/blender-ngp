@@ -14,6 +14,7 @@
 
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common_device.cuh>
+#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/testbed.h>
 #include <neural-graphics-primitives/thread_pool.h>
 
@@ -319,6 +320,17 @@ PYBIND11_MODULE(pyngp, m) {
 		.value("SphericalQuadrilateral", ECameraModel::SphericalQuadrilateral)
 		.value("QuadrilateralHexahedron", ECameraModel::QuadrilateralHexahedron)
 		.export_values();
+	
+	py::enum_<EMaskMode>(m, "MaskMode")
+		.value("Add", EMaskMode::Add)
+		.value("Subtract", EMaskMode::Subtract)
+		.export_values();
+	
+	py::enum_<EMaskShape>(m, "MaskShape")
+		.value("Box", EMaskShape::Box)
+		.value("Cylinder", EMaskShape::Cylinder)
+		.value("Sphere", EMaskShape::Sphere)
+		.export_values();
 
 	py::class_<BoundingBox>(m, "BoundingBox")
 		.def(py::init<>())
@@ -353,6 +365,10 @@ PYBIND11_MODULE(pyngp, m) {
 	
 	py::class_<SphericalQuadrilateral>(m, "SphericalQuadrilateralConfig")
 		.def(py::init<const float&, const float&, const float&>(), py::arg("width"), py::arg("height"), py::arg("curvature"))
+		;
+	
+	py::class_<Mask3D>(m, "Mask3D")
+		.def(py::init<const EMaskMode&, const EMaskShape&, const Matrix4f&, const float&>(), py::arg("mode"), py::arg("shape"), py::arg("transform"), py::arg("feather"))
 		;
 	
 	py::class_<Testbed> testbed(m, "Testbed");
@@ -502,6 +518,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("render_camera_model", &Testbed::m_render_camera_model)
 		.def_readwrite("camera_quadrilateral_hexahedron", &Testbed::m_camera_quadrilateral_hexahedron)
 		.def_readwrite("camera_spherical_quadrilateral", &Testbed::m_camera_spherical_quadrilateral)
+		.def_readwrite("render_masks", &Testbed::m_render_masks)
 		.def_readwrite("up_dir", &Testbed::m_up_dir)
 		.def_readwrite("sun_dir", &Testbed::m_sun_dir)
 		.def_property("look_at", &Testbed::look_at, &Testbed::set_look_at)

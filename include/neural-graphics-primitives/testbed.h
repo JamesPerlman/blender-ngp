@@ -19,6 +19,7 @@
 #include <neural-graphics-primitives/camera_path.h>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/discrete_distribution.h>
+#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/nerf.h>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/render_buffer.h>
@@ -39,6 +40,7 @@
 #endif
 
 #include <thread>
+#include <vector>
 
 struct GLFWwindow;
 
@@ -188,6 +190,8 @@ public:
 			float min_transmittance,
 			float glow_y_cutoff,
 			int glow_mode,
+			const Mask3D* host_render_masks,
+			uint32_t n_render_masks,
 			const float* extra_dims_gpu,
 			cudaStream_t stream
 		);
@@ -509,6 +513,8 @@ public:
 	ECameraModel m_render_camera_model = ECameraModel::Perspective;
 	SphericalQuadrilateral m_camera_spherical_quadrilateral = SphericalQuadrilateral::Zero();
 	QuadrilateralHexahedron m_camera_quadrilateral_hexahedron = QuadrilateralHexahedron::Zero();
+
+	std::vector<Mask3D> m_render_masks;
 
 	uint32_t m_seed = 1337;
 #ifdef NGP_GUI

@@ -16,6 +16,7 @@
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/json_binding.h>
 #include <neural-graphics-primitives/marching_cubes.h>
+#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/nerf_network.h>
 #include <neural-graphics-primitives/render_buffer.h>
@@ -40,6 +41,7 @@
 
 #include <fstream>
 #include <set>
+#include <vector>
 
 #ifdef NGP_GUI
 #  include <imgui/imgui.h>

@@ -18,6 +18,7 @@
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/envmap.cuh>
 #include <neural-graphics-primitives/marching_cubes.h>
+#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/nerf_network.h>
 #include <neural-graphics-primitives/render_buffer.h>
@@ -637,6 +638,7 @@ __global__ void advance_pos_nerf(
 	Vector3f pos;
 
 	while (1) {
+		// TODO: Distortion fields
 		pos = origin + dir * t;
 		if (!render_aabb.contains(render_aabb_to_local * pos)) {
 			payload.alive = false;
@@ -730,6 +732,7 @@ __global__ void generate_next_nerf_network_inputs(
 		Vector3f pos;
 		float dt = 0.0f;
 		while (1) {
+			// TODO: Distortion fields
 			pos = origin + dir * t;
 			if (!render_aabb.contains(render_aabb_to_local * pos)) {
 				payload.n_steps = j;
@@ -760,6 +763,8 @@ __global__ void composite_kernel_nerf(
 	const uint32_t stride,
 	const uint32_t current_step,
 	BoundingBox aabb,
+	const Mask3D* __restrict__ render_masks,
+	uint32_t n_render_masks,
 	float glow_y_cutoff,
 	int glow_mode,
 	const uint32_t n_training_images,
@@ -818,6 +823,13 @@ __global__ void composite_kernel_nerf(
 
 		Array3f rgb = network_to_rgb(local_network_output, rgb_activation);
 
+		// Crop masks
+		// for(thrust::device_vector<Mask3D>::iterator iter = render_masks.begin(); iter != render_masks.end(); ++iter)  {
+		// 	float mask_alpha = iter.base()->get_alpha(pos);
+		// 	weight = clamp(weight + mask_alpha, 0.0f, 1.0f);
+		// };
+
+		// Glow mode
 		if (glow_mode) { // random grid visualizations ftw!
 #if 0
 			if (0) {  // extremely startrek edition
@@ -2110,6 +2122,8 @@ uint32_t Testbed::NerfTracer::trace(
 	float min_transmittance,
 	float glow_y_cutoff,
 	int glow_mode,
+	const Mask3D* render_masks,
+	const uint32_t n_render_masks,
 	const float* extra_dims_gpu,
 	cudaStream_t stream
 ) {
@@ -2182,6 +2196,8 @@ uint32_t Testbed::NerfTracer::trace(
 			n_elements,
 			i,
 			train_aabb,
+			render_masks,
+			n_render_masks,
 			glow_y_cutoff,
 			glow_mode,
 			n_training_images,
@@ -2337,12 +2353,13 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 		render_mode,
 		stream
 	);
-
 	uint32_t n_hit;
 	if (m_render_mode == ERenderMode::Slice) {
 		n_hit = m_nerf.tracer.n_rays_initialized();
 	} else {
 		float depth_scale = 1.0f / m_nerf.training.dataset.scale;
+		GPUMemory<Mask3D> render_masks(m_render_masks.size());
+		cudaMemcpy(render_masks.data(), m_render_masks.data(), m_render_masks.size() * sizeof(Mask3D), cudaMemcpyHostToDevice);
 		n_hit = m_nerf.tracer.trace(
 			*m_nerf_network,
 			m_render_aabb,
@@ -2364,6 +2381,8 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 			m_nerf.render_min_transmittance,
 			m_nerf.glow_y_cutoff,
 			m_nerf.glow_mode,
+			render_masks.data(),
+			m_render_masks.size(),
 			extra_dims_gpu,
 			stream
 		);
