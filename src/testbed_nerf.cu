@@ -824,10 +824,12 @@ __global__ void composite_kernel_nerf(
 		Array3f rgb = network_to_rgb(local_network_output, rgb_activation);
 
 		// Crop masks
-		// for(thrust::device_vector<Mask3D>::iterator iter = render_masks.begin(); iter != render_masks.end(); ++iter)  {
-		// 	float mask_alpha = iter.base()->get_alpha(pos);
-		// 	weight = clamp(weight + mask_alpha, 0.0f, 1.0f);
-		// };
+		float mask_weight = 1.f;
+		for (uint32_t k = 0; k < n_render_masks; ++k) {
+			float mask_alpha = render_masks[k].sample(pos);
+			mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
+		}
+		weight *= mask_weight;
 
 		// Glow mode
 		if (glow_mode) { // random grid visualizations ftw!
@@ -2358,8 +2360,6 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 		n_hit = m_nerf.tracer.n_rays_initialized();
 	} else {
 		float depth_scale = 1.0f / m_nerf.training.dataset.scale;
-		GPUMemory<Mask3D> render_masks(m_render_masks.size());
-		cudaMemcpy(render_masks.data(), m_render_masks.data(), m_render_masks.size() * sizeof(Mask3D), cudaMemcpyHostToDevice);
 		n_hit = m_nerf.tracer.trace(
 			*m_nerf_network,
 			m_render_aabb,
@@ -2381,8 +2381,8 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 			m_nerf.render_min_transmittance,
 			m_nerf.glow_y_cutoff,
 			m_nerf.glow_mode,
-			render_masks.data(),
-			m_render_masks.size(),
+			render_masks_gpu.data(),
+			n_render_masks,
 			extra_dims_gpu,
 			stream
 		);

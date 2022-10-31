@@ -515,6 +515,8 @@ public:
 	QuadrilateralHexahedron m_camera_quadrilateral_hexahedron = QuadrilateralHexahedron::Zero();
 
 	std::vector<Mask3D> m_render_masks;
+	uint32_t n_render_masks;
+	tcnn::GPUMemory<Mask3D> render_masks_gpu;
 
 	uint32_t m_seed = 1337;
 #ifdef NGP_GUI

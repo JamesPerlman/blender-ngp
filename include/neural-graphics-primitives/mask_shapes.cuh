@@ -21,6 +21,8 @@
 
 #include <tiny-cuda-nn/common.h>
 
+using namespace Eigen;
+
 NGP_NAMESPACE_BEGIN
 
 enum class EMaskMode {
@@ -36,33 +38,41 @@ enum class EMaskShape : int {
 
 // thank you https://iquilezles.org/articles/distfunctions/ for the sdf primitives
 
-inline NGP_HOST_DEVICE float sdfBox(const Eigen::Vector3f& p) {
-    Eigen::Vector3f d = p.cwiseAbs() - Eigen::Vector3f(1.0f, 1.0f, 1.0f);
-    return d.cwiseMax(0.0f).norm() + std::min(std::max(d.x(), std::max(d.y(), d.z())), 0.0f);
+// xyz -> yzx
+
+inline NGP_HOST_DEVICE float sdfBox(const Vector3f& p) {
+    Vector3f d = p.cwiseAbs() - Vector3f(1.0f, 1.0f, 1.0f);
+    return d.cwiseMax(0.0f).norm() + min(max(d.x(), max(d.y(), d.z())), 0.0f);
 };
 
-inline NGP_HOST_DEVICE float sdfCylinder(const Eigen::Vector3f& p) {
-    Eigen::Vector2f d = Eigen::Vector2f(Eigen::Vector2f(p.x(), p.z()).norm(), p.y()).cwiseAbs() - Eigen::Vector2f(1.0f, 0.5f);
-    return d.cwiseMax(0.0f).norm() + std::min(std::max(d.x(), d.y()), 0.0f);
+inline NGP_HOST_DEVICE float sdfCylinder(const Vector3f& p) {
+    Vector2f d = Vector2f(Vector2f(p.y(), p.x()).norm(), p.z()).cwiseAbs() - Vector2f(1.0f, 1.0f);
+    return d.cwiseMax(0.0f).norm() + min(max(d.x(), d.y()), 0.0f);
 };
 
-inline NGP_HOST_DEVICE float sdfSphere(const Eigen::Vector3f& p) {
+inline NGP_HOST_DEVICE float sdfSphere(const Vector3f& p) {
     return p.norm() - 1.0f;
 };
 
 struct Mask3D {
     EMaskMode mode;
     EMaskShape shape;
-    Eigen::Matrix4f transform;
+    Matrix4f transform;
     float feather;
+    float opacity;
 
-    NGP_HOST_DEVICE Mask3D(const EMaskMode& mode, const EMaskShape& shape, const Eigen::Matrix4f& transform, const float& feather)
-        : mode(mode), shape(shape), transform(transform), feather(feather) {};
+    NGP_HOST_DEVICE Mask3D(const EMaskMode& mode, const EMaskShape& shape, const Matrix4f& transform, const float& feather, const float& opacity)
+        : mode(mode), shape(shape), transform(transform), feather(feather), opacity(opacity) {};
     
-    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Eigen::Matrix4f::Identity()), feather(0.0f) {};
+    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Matrix4f::Identity()), feather(0.0f), opacity(0.0f) {};
 
-    inline NGP_HOST_DEVICE float get_alpha(const Eigen::Vector3f& p) const {
-        Eigen::Vector3f p_local = (transform.inverse() * p.homogeneous()).head<3>();
+    inline NGP_HOST_DEVICE float sample(const Vector3f& p) const {
+        
+        Matrix4f t_inv = transform.inverse();
+        Vector4f p_h = p.homogeneous();
+        Vector4f p_t = t_inv * p_h;
+        Vector3f p_local = p_t.head<3>();
+
         float d = 0.0f;
         switch (shape) {
             case EMaskShape::Box:
@@ -76,13 +86,15 @@ struct Mask3D {
                 break;
         }
 
+        // TODO: Decompose transform to get accurate feathering
+        // need sdf from feather bounds also
         float alpha;
         if (feather == 0.0f) {
             alpha = d < 0.0f ? 1.0f : 0.0f;
         } else {
-            alpha = tcnn::clamp(0.5f + d / feather, 0.0f, 1.0f);
+            alpha = tcnn::clamp(0.5f - d / feather, 0.0f, 1.0f);
         }
-        return 2.0f * alpha * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
+        return 2.0f * opacity * (alpha - 0.5f) * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
     };
 };
 

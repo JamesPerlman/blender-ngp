@@ -368,7 +368,7 @@ PYBIND11_MODULE(pyngp, m) {
 		;
 	
 	py::class_<Mask3D>(m, "Mask3D")
-		.def(py::init<const EMaskMode&, const EMaskShape&, const Matrix4f&, const float&>(), py::arg("mode"), py::arg("shape"), py::arg("transform"), py::arg("feather"))
+		.def(py::init<const EMaskMode&, const EMaskShape&, const Matrix4f&, const float&, const float&>(), py::arg("mode"), py::arg("shape"), py::arg("transform"), py::arg("feather"), py::arg("opacity"))
 		;
 	
 	py::class_<Testbed> testbed(m, "Testbed");
