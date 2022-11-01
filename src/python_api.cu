@@ -368,7 +368,6 @@ PYBIND11_MODULE(pyngp, m) {
 		;
 	
 	py::class_<Mask3D>(m, "Mask3D")
-		.def(py::init<const EMaskShape&, const Matrix4f&, const EMaskMode&, const Vector4f&, const float&, const float&>(), py::arg("shape"), py::arg("transform"), py::arg("mode"), py::arg("config"), py::arg("feather"), py::arg("opacity"))
 		.def_static("Box", &Mask3D::Box, py::arg("dims"), py::arg("transform"), py::arg("mode"), py::arg("feather"), py::arg("opacity"))
 		.def_static("Cylinder", &Mask3D::Cylinder, py::arg("radius"), py::arg("height"), py::arg("transform"), py::arg("mode"), py::arg("feather"), py::arg("opacity"))
 		.def_static("Sphere", &Mask3D::Sphere, py::arg("radius"), py::arg("transform"), py::arg("mode"), py::arg("feather"), py::arg("opacity"))

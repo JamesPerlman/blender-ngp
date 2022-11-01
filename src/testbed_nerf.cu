@@ -1816,6 +1816,8 @@ __global__ void init_rays_with_payload_kernel_nerf(
 	float plane_z,
 	float aperture_size,
 	Lens lens,
+	const Mask3D* __restrict__ render_masks,
+	const uint32_t n_render_masks, 
 	const float* __restrict__ envmap_data,
 	const Vector2i envmap_resolution,
 	Array4f* __restrict__ framebuffer,
@@ -1928,6 +1930,22 @@ __global__ void init_rays_with_payload_kernel_nerf(
 		return;
 	}
 
+	bool ray_intersects_any_mask = n_render_masks == 0;
+	for (uint32_t k = 0; k < n_render_masks; ++k) {
+		const Mask3D& mask = render_masks[k];
+		if (mask.intersects_ray(ray)) {
+			ray_intersects_any_mask = true;
+			break;
+		}
+	}
+
+	if (!ray_intersects_any_mask) {
+		payload.origin = ray.o;
+		payload.alive = false;
+		return;
+	}
+
+
 	if (render_mode == ERenderMode::Distortion) {
 		Vector2f offset = Vector2f::Zero();
 		if (distortion_data) {
@@ -2036,6 +2054,8 @@ void Testbed::NerfTracer::init_rays_from_camera(
 	float plane_z,
 	float aperture_size,
 	const Lens& lens,
+	const Mask3D* render_masks,
+	const uint32_t n_render_masks,
 	const float* envmap_data,
 	const Vector2i& envmap_resolution,
 	const float* distortion_data,
@@ -2074,6 +2094,8 @@ void Testbed::NerfTracer::init_rays_from_camera(
 		plane_z,
 		aperture_size,
 		lens,
+		render_masks,
+		n_render_masks,
 		envmap_data,
 		envmap_resolution,
 		frame_buffer,
@@ -2300,6 +2322,17 @@ const float* Testbed::get_inference_extra_dims(cudaStream_t stream) const {
 	return dims_gpu;
 }
 
+void Testbed::prepare_nerf_masks() {
+	Mask3D first_mask = m_render_masks[0];
+	if (first_mask.shape != EMaskShape::All) {
+		// add another mask to beginning of m_render_masks
+		EMaskMode mode = first_mask.mode == EMaskMode::Add ? EMaskMode::Subtract : EMaskMode::Add;
+		m_render_masks.insert(m_render_masks.begin(), Mask3D::All(mode));
+	}
+	render_masks_gpu.resize_and_copy_from_host(m_render_masks);
+	m_n_render_masks = m_render_masks.size();
+}
+
 void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_res, const Vector2f& focal_length, const Matrix<float, 3, 4>& camera_matrix0, const Matrix<float, 3, 4>& camera_matrix1, const Vector4f& rolling_shutter, const Vector2f& screen_center, cudaStream_t stream) {
 	float plane_z = m_slice_plane_z + m_scale;
 	if (m_render_mode == ERenderMode::Slice) {
@@ -2320,6 +2353,7 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 
 	Lens lens = render_opencv_lens ? m_nerf.render_lens : Lens{};
 
+	prepare_nerf_masks();
 
 	m_nerf.tracer.init_rays_from_camera(
 		render_buffer.spp(),
@@ -2343,6 +2377,8 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 		plane_z,
 		m_aperture_size,
 		lens,
+		render_masks_gpu.data(),
+		m_n_render_masks,
 		m_envmap.envmap->params_inference(),
 		m_envmap.resolution,
 		render_grid_distortion ? m_distortion.map->params_inference() : nullptr,
@@ -2382,7 +2418,7 @@ void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_r
 			m_nerf.glow_y_cutoff,
 			m_nerf.glow_mode,
 			render_masks_gpu.data(),
-			n_render_masks,
+			m_n_render_masks,
 			extra_dims_gpu,
 			stream
 		);

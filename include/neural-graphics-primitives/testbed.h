@@ -156,6 +156,8 @@ public:
 			float plane_z,
 			float aperture_size,
 			const Lens& lens,
+			const Mask3D* render_masks,
+			const uint32_t n_render_masks,
 			const float* envmap_data,
 			const Eigen::Vector2i& envmap_resolution,
 			const float* distortion_data,
@@ -287,6 +289,7 @@ public:
 		cudaStream_t stream
 	);
 	const float* get_inference_extra_dims(cudaStream_t stream) const;
+	void prepare_nerf_masks();
 	void render_nerf(CudaRenderBuffer& render_buffer, const Eigen::Vector2i& max_res, const Eigen::Vector2f& focal_length, const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& rolling_shutter, const Eigen::Vector2f& screen_center, cudaStream_t stream);
 	void render_image(CudaRenderBuffer& render_buffer, cudaStream_t stream);
 	void render_frame(const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& nerf_rolling_shutter, CudaRenderBuffer& render_buffer, bool to_srgb = true) ;
@@ -515,7 +518,7 @@ public:
 	QuadrilateralHexahedron m_camera_quadrilateral_hexahedron = QuadrilateralHexahedron::Zero();
 
 	std::vector<Mask3D> m_render_masks;
-	uint32_t n_render_masks;
+	uint32_t m_n_render_masks;
 	tcnn::GPUMemory<Mask3D> render_masks_gpu;
 
 	uint32_t m_seed = 1337;

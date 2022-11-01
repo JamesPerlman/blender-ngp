@@ -34,53 +34,140 @@ enum class EMaskShape : int {
     Box,
     Cylinder,
     Sphere,
+    All,
 };
 
 // thank you https://iquilezles.org/articles/distfunctions/ for the sdf primitives
 
 // xyz -> yzx
 
-inline NGP_HOST_DEVICE float sdfBox(const Vector3f& p, const Vector3f& b) {
+inline NGP_HOST_DEVICE float sdf_box(const Vector3f& p, const Vector3f& b) {
     Vector3f d = p.cwiseAbs() - 0.5f * b;
     return d.cwiseMax(0.0f).norm() + min(max(d.x(), max(d.y(), d.z())), 0.0f);
 };
 
-inline NGP_HOST_DEVICE float sdfCylinder(const Vector3f& p, const float& r, const float& h) {
+inline NGP_HOST_DEVICE float sdf_cylinder(const Vector3f& p, const float& r, const float& h) {
     Vector2f d = Vector2f(Vector2f(p.y(), p.x()).norm(), p.z()).cwiseAbs() - Vector2f(r, 0.5f * h);
     return d.cwiseMax(0.0f).norm() + min(max(d.x(), d.y()), 0.0f);
 };
 
-inline NGP_HOST_DEVICE float sdfSphere(const Vector3f& p, const float& r) {
+inline NGP_HOST_DEVICE float sdf_sphere(const Vector3f& p, const float& r) {
     return p.norm() - r;
 };
+
+// intersections
+
+
+inline NGP_HOST_DEVICE bool ray_intersects_box(const Ray& ray, const Vector3f& box_size) {
+    const Vector3f inv_dir = ray.d.cwiseInverse();
+    const Vector3f t0 = -0.5f * box_size - ray.o;
+    const Vector3f t1 = 0.5f * box_size - ray.o;
+    const Vector3f t0_cpi = t0.cwiseProduct(inv_dir);
+    const Vector3f t1_cpi = t1.cwiseProduct(inv_dir);
+    const Vector3f tmin = t0_cpi.cwiseMin(t1_cpi);
+    const Vector3f tmax = t0_cpi.cwiseMax(t1_cpi);
+    return tmin.maxCoeff() <= tmax.minCoeff();
+};
+
+
+inline NGP_HOST_DEVICE bool ray_intersects_sphere(const Ray& ray, const float& radius) {
+    const float a = powf(ray.d.dot(ray.o), 2.0);
+    const float b = ray.o.squaredNorm() - radius * radius;
+    return !((a - b) < 0.0f);
+};
+
+inline NGP_HOST_DEVICE bool ray_intersects_plane(const Ray& ray, const Vector3f& n, const Vector3f& p) {
+    const float denom = n.dot(ray.d);
+    if (denom > 1e-6f) {
+        return (p - ray.o).dot(n) / denom >= 0.0f;
+    }
+    return false;
+};
+
+inline NGP_HOST_DEVICE bool intersect_plane_ray(const Ray& ray, const Vector3f& n, const Vector3f& p, float& t) {
+    const float denom = n.dot(ray.d);
+    if (denom > 1e-6f) {
+        t = (p - ray.o).dot(n) / denom;
+        return t >= 0.0f;
+    }
+    return false;
+};
+
+inline NGP_HOST_DEVICE bool ray_intersects_cylinder(const Ray& ray, const float& radius, const float& height) {
+    const float a = ray.d.head<2>().squaredNorm();
+    const float b = 2.0f * ray.d.head<2>().dot(ray.o.head<2>());
+    const float c = ray.o.head<2>().squaredNorm() - radius * radius;
+    const float d = b * b - 4.0f * a * c;
+    if (d < 0.0f) {
+        return false;
+    }
+
+    const float d_sqrt = sqrtf(d);
+    const float a2 = 2.0f * a;
+    float h_2 = 0.5f * height;
+
+    if (a2 > 1e-6f) {
+        const float t0 = (-b - d_sqrt) / a2;
+        const float t1 = (-b + d_sqrt) / a2;
+        const float z0 = ray.o.z() + t0 * ray.d.z();
+        const float z1 = ray.o.z() + t1 * ray.d.z();
+        if ((z0 >= -h_2 && z0 <= h_2) || (z1 >= -h_2 && z1 <= h_2)) {
+            return true;
+        };
+    }
+
+    // calculate point where ray intersects cylinder endcaps
+    float t = 0.0f;
+    if (intersect_plane_ray(ray, Vector3f(0.0f, 0.0f, 1.0f), Vector3f(0.0f, 0.0f, h_2), t)) {
+        const Vector3f p = ray.o + t * ray.d;
+        if (p.head<2>().squaredNorm() <= radius * radius) {
+            return true;
+        }
+    }
+    
+    if (intersect_plane_ray(ray, Vector3f(0.0f, 0.0f, -1.0f), Vector3f(0.0f, 0.0f, -h_2), t)) {
+        const Vector3f p = ray.o + t * ray.d;
+        if (p.head<2>().squaredNorm() <= radius * radius) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+#define ConfigArray Eigen::Array<float, 6, 1>
 
 struct Mask3D {
     EMaskMode mode;
     EMaskShape shape;
     Matrix4f transform;
-    Vector4f config;
+    ConfigArray config;
     float feather;
     float opacity;
 
-    NGP_HOST_DEVICE Mask3D(const EMaskShape& shape, const Matrix4f& transform, const EMaskMode& mode, const Vector4f& config, const float& feather, const float& opacity)
+    NGP_HOST_DEVICE Mask3D(const EMaskShape& shape, const Matrix4f& transform, const EMaskMode& mode, const ConfigArray& config, const float& feather, const float& opacity)
         : mode(mode), shape(shape), transform(transform), config(config), feather(feather), opacity(opacity) {};
     
-    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Matrix4f::Identity()), config(Vector4f::Zero()), feather(0.0f), opacity(0.0f) {};
+    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Matrix4f::Identity()), config({0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}), feather(0.0f), opacity(0.0f) {};
+
+    NGP_HOST_DEVICE static Mask3D All(const EMaskMode& mode) {
+        return Mask3D(EMaskShape::All, Matrix4f::Identity(), mode, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f);
+    };
 
     NGP_HOST_DEVICE static Mask3D Box(const Vector3f& dims, const Matrix4f& transform, const EMaskMode& mode, const float& feather, const float& opacity) {
-        return Mask3D(EMaskShape::Box, transform, mode, Vector4f(dims.x(), dims.y(), dims.z(), 0.0f), feather, opacity);
+        return Mask3D(EMaskShape::Box, transform, mode, {dims.x(), dims.y(), dims.z(), 0.0f, 0.0f, 0.0f}, feather, opacity);
     };
 
     NGP_HOST_DEVICE static Mask3D Cylinder(const float& radius, const float& height, const Matrix4f& transform, const EMaskMode& mode, const float& feather, const float& opacity) {
-        return Mask3D(EMaskShape::Cylinder, transform, mode, Vector4f(radius, height, 0.0f, 0.0f), feather, opacity);
+        return Mask3D(EMaskShape::Cylinder, transform, mode, {radius, height, 0.0f, 0.0f, 0.0f, 0.0f}, feather, opacity);
     };
 
     NGP_HOST_DEVICE static Mask3D Sphere(const float& radius, const Matrix4f& transform, const EMaskMode& mode, const float& feather, const float& opacity) {
-        return Mask3D(EMaskShape::Sphere, transform, mode, Vector4f(radius, 0.0f, 0.0f, 0.0f), feather, opacity);
+        return Mask3D(EMaskShape::Sphere, transform, mode, {radius, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, feather, opacity);
     };
 
     inline NGP_HOST_DEVICE float sample(const Vector3f& p) const {
-        
+
         Matrix4f t_inv = transform.inverse();
         Vector4f p_h = p.homogeneous();
         Vector4f p_t = t_inv * p_h;
@@ -89,13 +176,16 @@ struct Mask3D {
         float d = 0.0f;
         switch (shape) {
             case EMaskShape::Box:
-                d = sdfBox(p_local, config.head<3>());
+                d = sdf_box(p_local, config.head<3>());
                 break;
             case EMaskShape::Cylinder:
-                d = sdfCylinder(p_local, config.x(), config.y());
+                d = sdf_cylinder(p_local, config.coeff(0), config.coeff(1));
                 break;
             case EMaskShape::Sphere:
-                d = sdfSphere(p_local, config.x());
+                d = sdf_sphere(p_local, config.coeff(0));
+                break;
+            case EMaskShape::All:
+                return (mode == EMaskMode::Add) ? 1.0f : -1.0f;
                 break;
         }
 
@@ -107,7 +197,31 @@ struct Mask3D {
         } else {
             alpha = tcnn::clamp(0.5f - d / feather, 0.0f, 1.0f);
         }
-        return 2.0f * opacity * (alpha - 0.5f) * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
+        return opacity * alpha * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
+    };
+
+    inline NGP_HOST_DEVICE bool intersects_ray(const Ray& ray) const {
+        // all subtract masks have infinite additive area outside of them, and they are all finite shapes
+        if (mode == EMaskMode::Subtract) {
+            return true;
+        }
+        
+        Matrix4f t_inv4x4 = transform.inverse();
+        Matrix3f t_inv3x3 = t_inv4x4.topLeftCorner<3, 3>();
+        Vector3f ray_o_local = (t_inv4x4 * ray.o.homogeneous()).head<3>();
+        Vector3f ray_d_local = t_inv3x3 * ray.d;
+        Ray ray_local = {ray_o_local, ray_d_local.normalized()};
+
+        switch (shape) {
+            case EMaskShape::Box:
+                return ray_intersects_box(ray_local, config.head<3>() + 0.5f * feather);
+            case EMaskShape::Cylinder:
+                return ray_intersects_cylinder(ray_local, config.coeff(0) + 0.5f * feather, config.coeff(1) + 0.5f * feather);
+            case EMaskShape::Sphere:
+                return ray_intersects_sphere(ray_local, config.coeff(0) + 0.5f * feather);
+            case EMaskShape::All:
+                return false;
+        }
     };
 };
 
