@@ -2323,6 +2323,11 @@ const float* Testbed::get_inference_extra_dims(cudaStream_t stream) const {
 }
 
 void Testbed::prepare_nerf_masks() {
+	m_n_render_masks = m_render_masks.size();
+	if (m_render_masks.size() == 0) {
+		return;
+	}
+
 	Mask3D first_mask = m_render_masks[0];
 	if (first_mask.shape != EMaskShape::All) {
 		// add another mask to beginning of m_render_masks
@@ -2330,7 +2335,6 @@ void Testbed::prepare_nerf_masks() {
 		m_render_masks.insert(m_render_masks.begin(), Mask3D::All(mode));
 	}
 	render_masks_gpu.resize_and_copy_from_host(m_render_masks);
-	m_n_render_masks = m_render_masks.size();
 }
 
 void Testbed::render_nerf(CudaRenderBuffer& render_buffer, const Vector2i& max_res, const Vector2f& focal_length, const Matrix<float, 3, 4>& camera_matrix0, const Matrix<float, 3, 4>& camera_matrix1, const Vector4f& rolling_shutter, const Vector2f& screen_center, cudaStream_t stream) {
