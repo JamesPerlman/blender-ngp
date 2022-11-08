@@ -52,6 +52,9 @@
 
 #include <chrono>
 #include <functional>
+#include <math.h>
+
+#include <tiny-cuda-nn/common.h>
 
 NGP_NAMESPACE_BEGIN
 
@@ -292,6 +295,74 @@ private:
 
 	int64_t m_last_progress = 0;
 	std::chrono::time_point<std::chrono::steady_clock> m_creation_time;
+};
+
+struct DownsampleInfo {
+	uint32_t max_pixels;
+	uint32_t scaled_pixels;
+	Eigen::Vector2i max_res;
+	Eigen::Vector2i scaled_res;
+	Eigen::Vector2i skip; // number of pixels to skip for cur_level
+
+	// initializer
+	/*
+	tried something crafty here, but it didn't work out.
+
+	static inline NGP_HOST_DEVICE DownsampleInfo Make(Eigen::Vector2i resolution, uint32_t downsample_min, uint32_t downsample_factor) {
+		DownsampleInfo ds;
+		const uint32_t max_dimension = std::max((uint32_t)1, (uint32_t)std::max(resolution.x(), resolution.y()));
+
+		ds.max_level = (uint32_t)ceilf(log2f(max_dimension));
+		ds.min_level = downsample_min;
+		ds.cur_level = downsample_factor;
+		ds.prev_level = downsample_factor - 1;
+
+		ds.cur_divisions = 1 << ds.cur_level;
+		ds.prev_divisions = 1 << ds.prev_level;
+
+		ds.max_resolution = resolution;
+		ds.cur_resolution = Eigen::Vector2i(std::min(resolution.x(), (int)ds.cur_divisions), std::min(resolution.y(), (int)ds.cur_divisions));
+		ds.prev_resolution = Eigen::Vector2i((int)ds.prev_divisions, (int)ds.prev_divisions);
+
+		ds.cur_skip = Eigen::Vector2i(std::max(1, tcnn::div_round_up(ds.max_resolution.x(), (int)ds.cur_divisions)), std::max(1, tcnn::div_round_up(ds.max_resolution.y(), (int)ds.cur_divisions)));
+		ds.prev_skip = ds.max_resolution / ds.prev_divisions;
+
+		ds.max_pixels = ds.max_resolution.x() * ds.max_resolution.y();
+
+		return ds;
+	};
+	*/
+
+	static inline NGP_HOST_DEVICE DownsampleInfo MakeFromMip(Eigen::Vector2i resolution, uint32_t mip) {
+		DownsampleInfo ds;
+
+		if (mip == 0) {
+			ds.max_pixels = resolution.x() * resolution.y();
+			ds.scaled_pixels = ds.max_pixels;
+			ds.max_res = resolution;
+			ds.scaled_res = resolution;
+			ds.skip = Eigen::Vector2i(1, 1);
+		} else {
+			ds.max_pixels = resolution.x() * resolution.y();
+			ds.max_res = resolution;
+			ds.skip = Eigen::Vector2i(1 << mip, 1 << mip);
+			ds.scaled_res = Eigen::Vector2i(tcnn::div_round_up(resolution.x(), ds.skip.x()), tcnn::div_round_up(resolution.y(), ds.skip.y()));
+			ds.scaled_pixels = ds.scaled_res.x() * ds.scaled_res.y();
+		}
+
+		return ds;
+	}
+
+	/*
+
+	inline NGP_HOST_DEVICE bool is_valid_pixel(uint32_t x, uint32_t y) const {
+		return x < (uint32_t)max_resolution.x() && y < (uint32_t)max_resolution.y();
+	}
+
+	inline NGP_HOST_DEVICE bool is_valid_pixel_index(uint32_t index) const {
+		return index < max_pixels;
+	}
+	*/
 };
 
 NGP_NAMESPACE_END

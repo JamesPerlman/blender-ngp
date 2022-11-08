@@ -171,6 +171,34 @@ public:
 			cudaStream_t stream
 		);
 
+		void bl_init_rays_from_camera(
+			uint32_t sample_index,
+			uint32_t padded_output_width,
+			uint32_t n_extra_dims,
+			ECameraModel camera_model,
+			const Vector2i& resolution,
+			const Vector2f& focal_length,
+			const SphericalQuadrilateral& spherical_quadrilateral,
+			const QuadrilateralHexahedron& quadrilateral_hexahedron,
+			const Matrix<float, 3, 4>& camera_matrix,
+			const Vector2f& screen_center,
+			const Vector3f& parallax_shift,
+			const BoundingBox& render_aabb,
+			const Matrix3f& render_aabb_to_local,
+			float near_distance,
+			float plane_z,
+			float aperture_size,
+			const Lens& lens,
+			const Mask3D* render_masks,
+			const uint32_t n_render_masks,
+			Eigen::Array4f* frame_buffer,
+			float* depth_buffer,
+			uint8_t* grid,
+			float cone_angle_constant,
+			const DownsampleInfo& ds,
+			cudaStream_t stream
+		);
+
 		uint32_t trace(
 			NerfNetwork<precision_t>& network,
 			const BoundingBox& render_aabb,
@@ -194,6 +222,30 @@ public:
 			int glow_mode,
 			const Mask3D* host_render_masks,
 			uint32_t n_render_masks,
+			const float* extra_dims_gpu,
+			cudaStream_t stream
+		);
+
+		
+		uint32_t bl_trace(
+			NerfNetwork<precision_t>& network,
+			const BoundingBox& render_aabb,
+			const Eigen::Matrix3f& render_aabb_to_local,
+			const BoundingBox& train_aabb,
+			const uint32_t n_training_images,
+			const TrainingXForm* training_xforms,
+			const Vector2f& focal_length,
+			float cone_angle_constant,
+			const uint8_t* grid,
+			const Eigen::Matrix<float, 3, 4> &camera_matrix,
+			float depth_scale,
+			int visualized_layer,
+			int visualized_dim,
+			ENerfActivation rgb_activation,
+			ENerfActivation density_activation,
+			float min_transmittance,
+			const Mask3D* render_masks,
+			const uint32_t n_render_masks,
 			const float* extra_dims_gpu,
 			cudaStream_t stream
 		);
@@ -290,9 +342,31 @@ public:
 	);
 	const float* get_inference_extra_dims(cudaStream_t stream) const;
 	void prepare_nerf_masks();
+	void bl_set_render_masks(const std::vector<Mask3D>& render_masks);
 	void render_nerf(CudaRenderBuffer& render_buffer, const Eigen::Vector2i& max_res, const Eigen::Vector2f& focal_length, const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& rolling_shutter, const Eigen::Vector2f& screen_center, cudaStream_t stream);
 	void render_image(CudaRenderBuffer& render_buffer, cudaStream_t stream);
 	void render_frame(const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& nerf_rolling_shutter, CudaRenderBuffer& render_buffer, bool to_srgb = true) ;
+	
+	// blender
+	void Testbed::bl_render_frame(
+		const Matrix<float, 3, 4>& camera_matrix,
+		CudaRenderBuffer& render_buffer,
+		bool to_srgb,
+		const DownsampleInfo& ds,
+		bool flip_y,
+		const std::vector<Mask3D>& render_masks
+	);
+	void bl_render_nerf(
+		CudaRenderBuffer& render_buffer,
+		const Vector2f& focal_length,
+		const Matrix<float, 3, 4>& camera_matrix,
+		const Vector2f& screen_center,
+		const DownsampleInfo& ds,
+		bool flip_y,
+		const std::vector<Mask3D>& render_masks,
+		cudaStream_t stream
+	);
+
 	void visualize_nerf_cameras(ImDrawList* list, const Eigen::Matrix<float, 4, 4>& world2proj);
 	nlohmann::json load_network_config(const filesystem::path& network_config_path);
 	void reload_network_from_file(const std::string& network_config_path);
@@ -389,6 +463,28 @@ public:
 	pybind11::array_t<float> render_with_rolling_shutter_to_cpu(const Eigen::Matrix<float, 3, 4>& camera_transform_start, const Eigen::Matrix<float, 3, 4>& camera_transform_end, const Eigen::Vector4f& rolling_shutter, int width, int height, int spp, bool linear);
 	pybind11::array_t<float> screenshot(bool linear) const;
 	void override_sdf_training_data(pybind11::array_t<float> points, pybind11::array_t<float> distances);
+	// blender
+	void bl_nerf_render_thread(
+		const pybind11::array_t<float>& result,
+		int width,
+		int height,
+		int spp,
+		bool linear,
+		uint32_t mip,
+		bool flip_y,
+		const std::vector<Mask3D>& render_masks,
+		const std::function<void(pybind11::array_t<float>)> &render_callback
+	);
+	void bl_request_nerf_render(
+		int width,
+		int height,
+		int spp,
+		bool linear,
+		uint32_t mip,
+		bool flip_y,
+		const std::vector<Mask3D>& render_masks,
+		const std::function<void(pybind11::array_t<float>)> &render_callback
+	);
 #endif
 
 	double calculate_iou(uint32_t n_samples=128*1024*1024, float scale_existing_results_factor=0.0, bool blocking=true, bool force_use_octree = true);
@@ -907,6 +1003,10 @@ public:
 		Eigen::Vector2i resolution;
 	} m_distortion;
 	std::shared_ptr<NerfNetwork<precision_t>> m_nerf_network;
+
+	// Blender Render stuff
+	bool m_currently_rendering = false;
+	std::thread m_render_thread;
 };
 
 NGP_NAMESPACE_END

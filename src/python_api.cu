@@ -28,6 +28,8 @@
 #include <pybind11_json/pybind11_json.hpp>
 
 #include <filesystem/path.h>
+#include <functional>
+#include <thread>
 
 #ifdef NGP_GUI
 #  include <imgui/imgui.h>
@@ -184,6 +186,56 @@ py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool l
 
 	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(buf.ptr, width * sizeof(float) * 4, m_windowless_render_surface.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
 	return result;
+}
+
+void Testbed::bl_nerf_render_thread(
+	const py::array_t<float>& result,
+	int width,
+	int height,
+	int spp,
+	bool linear,
+	uint32_t mip,
+	bool flip_y,
+	const std::vector<Mask3D>& render_masks,
+	const std::function<void(py::array_t<float>)> &render_callback
+) {
+	
+	const DownsampleInfo ds = DownsampleInfo::MakeFromMip(Eigen::Vector2i(width, height), mip);
+	bl_render_frame(m_camera, m_windowless_render_surface, !linear, ds, flip_y, render_masks);
+	py::buffer_info buf = result.request();
+	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(buf.ptr, width * sizeof(float) * 4, m_windowless_render_surface.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
+	render_callback(result);
+
+	m_currently_rendering = false;
+}
+
+// starts a chain of renders to procedurally generate higher resolution images
+void Testbed::bl_request_nerf_render(
+	int width,
+	int height,
+	int spp,
+	bool linear,
+	uint32_t mip,
+	bool flip_y,
+	const std::vector<Mask3D>& render_masks,
+	const std::function<void(py::array_t<float>)> &render_callback
+) {
+	if (m_currently_rendering) {
+		return;
+	}
+	m_currently_rendering = true;
+	py::array_t<float> result({height, width, 4});
+	
+	m_windowless_render_surface.resize({width, height});
+	m_windowless_render_surface.reset_accumulation();
+
+	if (m_autofocus) {
+		autofocus();
+	}
+
+	// bl_nerf_render_thread(result, width, height, spp, linear, mip, flip_y, render_masks, render_callback);
+	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, width, height, spp, linear, mip, flip_y, render_masks, render_callback);
+	m_render_thread.detach();
 }
 
 py::array_t<float> Testbed::render_with_rolling_shutter_to_cpu(const Eigen::Matrix<float, 3, 4>& camera_transform_start, const Eigen::Matrix<float, 3, 4>& camera_transform_end, const Eigen::Vector4f& rolling_shutter, int width, int height, int spp, bool linear) {
@@ -409,6 +461,16 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("end_t") = -1.f,
 			py::arg("fps") = 30.f,
 			py::arg("shutter_fraction") = 1.0f
+		)
+		.def("request_nerf_render", &Testbed::bl_request_nerf_render, "Requests a nerf render frame.",
+			py::arg("width"),
+			py::arg("height"),
+			py::arg("spp"),
+			py::arg("linear"),
+			py::arg("mip"),
+			py::arg("flip_y"),
+			py::arg("masks"),
+			py::arg("render_callback")
 		)
 		.def("render_with_rolling_shutter", &Testbed::render_with_rolling_shutter_to_cpu, "Renders an image at the requested resolution. Does not require a window. Supports rolling shutter, with per ray time being computed as A+B*u+C*v+D*t for [A,B,C,D]",
 			py::arg("transform_matrix_start"),

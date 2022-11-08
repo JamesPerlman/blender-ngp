@@ -8,7 +8,7 @@
  * license agreement from NVIDIA CORPORATION is strictly prohibited.
  */
 
-/** @file   camera_path.h
+/** @file   mask_shapes.h
  *  @author James Perlman, avid instant-ngp fan
  */
 

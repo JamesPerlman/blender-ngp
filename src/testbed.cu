@@ -2671,6 +2671,43 @@ __global__ void dlss_prep_kernel(
 	}
 }
 
+void Testbed::bl_render_frame(
+	const Matrix<float, 3, 4>& camera_matrix,
+	CudaRenderBuffer& render_buffer, 
+	bool to_srgb,
+	const DownsampleInfo& ds, 
+	bool flip_y,
+	const std::vector<Mask3D>& render_masks
+) {
+	Vector2i max_res = m_window_res.cwiseMax(render_buffer.in_resolution());
+
+	render_buffer.clear_frame(m_stream.get());
+
+	Vector2f focal_length = calc_focal_length(render_buffer.in_resolution(), m_fov_axis, m_zoom);
+	Vector2f screen_center = render_screen_center();
+
+	bl_render_nerf(
+		render_buffer,
+		focal_length,
+		camera_matrix,
+		screen_center,
+		ds,
+		flip_y,
+		render_masks,
+		m_stream.get()
+	);
+	render_buffer.set_color_space(m_color_space);
+	render_buffer.set_tonemap_curve(m_tonemap_curve);
+
+	m_prev_camera = camera_matrix;
+	m_prev_scale = m_scale;
+	m_image.prev_pos = m_image.pos;
+
+	render_buffer.accumulate(m_exposure, m_stream.get());
+	render_buffer.tonemap(m_exposure, m_background_color, to_srgb ? EColorSpace::SRGB : EColorSpace::Linear, m_stream.get());
+	CUDA_CHECK_THROW(cudaStreamSynchronize(m_stream.get()));
+}
+
 void Testbed::render_frame(const Matrix<float, 3, 4>& camera_matrix0, const Matrix<float, 3, 4>& camera_matrix1, const Vector4f& nerf_rolling_shutter, CudaRenderBuffer& render_buffer, bool to_srgb) {
 	Vector2i max_res = m_window_res.cwiseMax(render_buffer.in_resolution());
 
