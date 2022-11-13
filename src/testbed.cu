@@ -20,6 +20,7 @@
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/nerf_network.h>
 #include <neural-graphics-primitives/render_buffer.h>
+#include <neural-graphics-primitives/render_data.cuh>
 #include <neural-graphics-primitives/takikawa_encoding.cuh>
 #include <neural-graphics-primitives/testbed.h>
 #include <neural-graphics-primitives/tinyexr_wrapper.h>
@@ -2672,12 +2673,8 @@ __global__ void dlss_prep_kernel(
 }
 
 void Testbed::bl_render_frame(
-	const Matrix<float, 3, 4>& camera_matrix,
-	CudaRenderBuffer& render_buffer, 
-	bool to_srgb,
-	const DownsampleInfo& ds, 
-	bool flip_y,
-	const std::vector<Mask3D>& render_masks
+	CudaRenderBuffer& render_buffer,
+	RenderData& render_data
 ) {
 	Vector2i max_res = m_window_res.cwiseMax(render_buffer.in_resolution());
 
@@ -2688,23 +2685,15 @@ void Testbed::bl_render_frame(
 
 	bl_render_nerf(
 		render_buffer,
-		focal_length,
-		camera_matrix,
-		screen_center,
-		ds,
-		flip_y,
-		render_masks,
+		render_data,
 		m_stream.get()
 	);
-	render_buffer.set_color_space(m_color_space);
-	render_buffer.set_tonemap_curve(m_tonemap_curve);
 
-	m_prev_camera = camera_matrix;
-	m_prev_scale = m_scale;
-	m_image.prev_pos = m_image.pos;
-
-	render_buffer.accumulate(m_exposure, m_stream.get());
-	render_buffer.tonemap(m_exposure, m_background_color, to_srgb ? EColorSpace::SRGB : EColorSpace::Linear, m_stream.get());
+	render_buffer.set_color_space(render_data.output.color_space);
+	render_buffer.set_tonemap_curve(render_data.output.tonemap_curve);
+	render_buffer.accumulate(render_data.output.exposure, m_stream.get());
+	// TODO: different color space here? not sure what tonemap does.
+	render_buffer.tonemap(render_data.output.exposure, render_data.output.background_color, render_data.output.color_space, m_stream.get());
 	CUDA_CHECK_THROW(cudaStreamSynchronize(m_stream.get()));
 }
 
@@ -3019,7 +3008,7 @@ void Testbed::gather_histograms() {
 }
 
 // Increment this number when making a change to the snapshot format
-static const size_t SNAPSHOT_FORMAT_VERSION = 1;
+
 
 void Testbed::save_snapshot(const std::string& filepath_string, bool include_optimizer_state) {
 	fs::path filepath = filepath_string;

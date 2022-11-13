@@ -188,38 +188,22 @@ inline NGP_HOST_DEVICE Ray perspective_pixel_to_ray(
 	const Eigen::Vector2i& resolution,
 	const Eigen::Vector2f& focal_length,
 	const Eigen::Matrix<float, 3, 4>& camera_matrix,
-	const Eigen::Vector2f& screen_center,
-	const Eigen::Vector3f& parallax_shift,
-	bool snap_to_pixel_centers = false,
 	float near_distance = 0.0f,
-	float focus_z = 1.0f,
 	float aperture_size = 0.0f,
-	const Lens& lens = {}
+	float focus_z = 1.0f
 ) {
-	Eigen::Vector2f offset = ld_random_pixel_offset(snap_to_pixel_centers ? 0 : spp);
+	Eigen::Vector2f offset = ld_random_pixel_offset(spp);
 	Eigen::Vector2f uv = (pixel.cast<float>() + offset).cwiseQuotient(resolution.cast<float>());
 
 	Eigen::Vector3f dir;
-	if (lens.mode == ELensMode::FTheta) {
-		dir = f_theta_undistortion(uv - screen_center, lens.params, {1000.f, 0.f, 0.f});
-		if (dir.x() == 1000.f) {
-			return {{1000.f, 0.f, 0.f}, {0.f, 0.f, 1.f}}; // return a point outside the aabb so the pixel is not rendered
-		}
-	} else if (lens.mode == ELensMode::LatLong) {
-		dir = latlong_to_dir(uv);
-	} else {
-		dir = {
-			(uv.x() - screen_center.x()) * (float)resolution.x() / focal_length.x(),
-			(uv.y() - screen_center.y()) * (float)resolution.y() / focal_length.y(),
-			1.0f
-		};
-		if (lens.mode == ELensMode::OpenCV) {
-			iterative_opencv_lens_undistortion(lens.params, &dir.x(), &dir.y());
-		}
-	}
 
-	Eigen::Vector3f head_pos = {parallax_shift.x(), parallax_shift.y(), 0.f};
-	dir -= head_pos * parallax_shift.z(); // we could use focus_z here in the denominator. for now, we pack m_scale in here.
+	dir = {
+		(uv.x() - 0.5f) * (float)resolution.x() / focal_length.x(),
+		(uv.y() - 0.5f) * (float)resolution.y() / focal_length.y(),
+		1.0f
+	};
+
+	Eigen::Vector3f head_pos = {0.0f, 0.0f, 0.f};
 	dir = camera_matrix.block<3, 3>(0, 0) * dir;
 
 	Eigen::Vector3f origin = camera_matrix.block<3, 3>(0, 0) * head_pos + camera_matrix.col(3);

@@ -190,51 +190,43 @@ py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool l
 
 void Testbed::bl_nerf_render_thread(
 	const py::array_t<float>& result,
-	int width,
-	int height,
-	int spp,
-	bool linear,
-	uint32_t mip,
-	bool flip_y,
-	const std::vector<Mask3D>& render_masks,
+	RenderData& render_data,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
+    CudaRenderBuffer render_buffer{std::make_shared<CudaSurface2D>()};
+	render_buffer.resize({(int)render_data.output.resolution.x(), (int)render_data.output.resolution.y()});
+	render_buffer.reset_accumulation();
 	
-	const DownsampleInfo ds = DownsampleInfo::MakeFromMip(Eigen::Vector2i(width, height), mip);
-	bl_render_frame(m_camera, m_windowless_render_surface, !linear, ds, flip_y, render_masks);
-	py::buffer_info buf = result.request();
-	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(buf.ptr, width * sizeof(float) * 4, m_windowless_render_surface.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
+	bl_render_frame(render_buffer, render_data);
+
+	py::buffer_info output_buffer = result.request();
+	size_t width = render_data.output.resolution.x();
+	size_t height = render_data.output.resolution.y();
+	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(output_buffer.ptr, width * sizeof(float) * 4, render_buffer.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
 	render_callback(result);
 
 	m_currently_rendering = false;
 }
 
 // starts a chain of renders to procedurally generate higher resolution images
+// right now this requires CUDA to copy all the RenderData into the GPU for every rendered frame (minus the snapshots).
+// It would be wise to refactor this to only copy the data that changes between frames.
 void Testbed::bl_request_nerf_render(
-	int width,
-	int height,
-	int spp,
-	bool linear,
-	uint32_t mip,
-	bool flip_y,
-	const std::vector<Mask3D>& render_masks,
+	RenderData& render_data,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
 	if (m_currently_rendering) {
 		return;
 	}
 	m_currently_rendering = true;
-	py::array_t<float> result({height, width, 4});
-	
-	m_windowless_render_surface.resize({width, height});
-	m_windowless_render_surface.reset_accumulation();
+	py::array_t<float> result({render_data.output.resolution.y(), render_data.output.resolution.x(), 4});
 
 	if (m_autofocus) {
 		autofocus();
 	}
 
 	// bl_nerf_render_thread(result, width, height, spp, linear, mip, flip_y, render_masks, render_callback);
-	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, width, height, spp, linear, mip, flip_y, render_masks, render_callback);
+	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_data, render_callback);
 	m_render_thread.detach();
 }
 
@@ -425,6 +417,74 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_static("Sphere", &Mask3D::Sphere, py::arg("radius"), py::arg("transform"), py::arg("mode"), py::arg("feather"), py::arg("opacity"))
 		;
 	
+	py::class_<RenderOutputProperties>(m, "RenderOutputProperties")
+		.def(py::init<
+				const Vector2i&,
+				const DownsampleInfo&,
+				uint32_t,
+				EColorSpace,
+				ETonemapCurve,
+				float,
+				const Vector4f,
+				bool
+			>(),
+			py::arg("resolution"),
+			py::arg("ds"),
+			py::arg("spp"),
+			py::arg("color_space"),
+			py::arg("tonemap_curve"),
+			py::arg("exposure"),
+			py::arg("background_color"),
+			py::arg("flip_y")
+		)
+		;
+	
+	py::class_<RenderModifiers>(m, "RenderModifiers")
+		.def(py::init<std::vector<Mask3D>>(), py::arg("masks"))
+		;
+	
+	py::class_<DownsampleInfo>(m, "DownsampleInfo")
+		.def_static("MakeFromMip", &DownsampleInfo::MakeFromMip, py::arg("resolution"), py::arg("mip"))
+		;
+	
+	py::class_<RenderCameraProperties>(m, "RenderCameraProperties")
+		.def(py::init<
+				const Matrix<float, 3, 4>&,
+				ECameraModel,
+				float,
+				float,
+				float,
+				float,
+				const SphericalQuadrilateral&,
+				const QuadrilateralHexahedron&
+			>(),
+			py::arg("transform"),
+			py::arg("model"),
+			py::arg("focal_length"),
+			py::arg("near_distance"),
+			py::arg("aperture_size"),
+			py::arg("focus_z"),
+			py::arg("spherical_quadrilateral"),
+			py::arg("quadrilateral_hexahedron")
+		)
+		;
+
+	py::class_<RenderData>(m, "RenderData")
+		.def(py::init<
+				const RenderOutputProperties&,
+				const RenderCameraProperties&,
+				const RenderModifiers&,
+				const std::vector<NerfScene>&,
+				const BoundingBox&
+			>(),
+			py::arg("output"),
+			py::arg("camera"),
+			py::arg("modifiers"),
+			py::arg("scenes"),
+			py::arg("aabb")
+		)
+		;
+	
 	py::class_<Testbed> testbed(m, "Testbed");
 	testbed
 		.def(py::init<ETestbedMode>())
@@ -463,13 +523,7 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("shutter_fraction") = 1.0f
 		)
 		.def("request_nerf_render", &Testbed::bl_request_nerf_render, "Requests a nerf render frame.",
-			py::arg("width"),
-			py::arg("height"),
-			py::arg("spp"),
-			py::arg("linear"),
-			py::arg("mip"),
-			py::arg("flip_y"),
-			py::arg("masks"),
+			py::arg("render_request"),
 			py::arg("render_callback")
 		)
 		.def("render_with_rolling_shutter", &Testbed::render_with_rolling_shutter_to_cpu, "Renders an image at the requested resolution. Does not require a window. Supports rolling shutter, with per ray time being computed as A+B*u+C*v+D*t for [A,B,C,D]",

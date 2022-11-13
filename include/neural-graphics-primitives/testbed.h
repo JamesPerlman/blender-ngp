@@ -23,6 +23,7 @@
 #include <neural-graphics-primitives/nerf.h>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/render_buffer.h>
+#include <neural-graphics-primitives/render_data.cuh>
 #include <neural-graphics-primitives/sdf.h>
 #include <neural-graphics-primitives/shared_queue.h>
 #include <neural-graphics-primitives/trainable_buffer.cuh>
@@ -172,30 +173,11 @@ public:
 		);
 
 		void bl_init_rays_from_camera(
-			uint32_t sample_index,
 			uint32_t padded_output_width,
 			uint32_t n_extra_dims,
-			ECameraModel camera_model,
-			const Vector2i& resolution,
-			const Vector2f& focal_length,
-			const SphericalQuadrilateral& spherical_quadrilateral,
-			const QuadrilateralHexahedron& quadrilateral_hexahedron,
-			const Matrix<float, 3, 4>& camera_matrix,
-			const Vector2f& screen_center,
-			const Vector3f& parallax_shift,
-			const BoundingBox& render_aabb,
-			const Matrix3f& render_aabb_to_local,
-			float near_distance,
-			float plane_z,
-			float aperture_size,
-			const Lens& lens,
-			const Mask3D* render_masks,
-			const uint32_t n_render_masks,
 			Eigen::Array4f* frame_buffer,
 			float* depth_buffer,
-			uint8_t* grid,
-			float cone_angle_constant,
-			const DownsampleInfo& ds,
+			RenderData& render_data,
 			cudaStream_t stream
 		);
 
@@ -228,25 +210,7 @@ public:
 
 		
 		uint32_t bl_trace(
-			NerfNetwork<precision_t>& network,
-			const BoundingBox& render_aabb,
-			const Eigen::Matrix3f& render_aabb_to_local,
-			const BoundingBox& train_aabb,
-			const uint32_t n_training_images,
-			const TrainingXForm* training_xforms,
-			const Vector2f& focal_length,
-			float cone_angle_constant,
-			const uint8_t* grid,
-			const Eigen::Matrix<float, 3, 4> &camera_matrix,
-			float depth_scale,
-			int visualized_layer,
-			int visualized_dim,
-			ENerfActivation rgb_activation,
-			ENerfActivation density_activation,
-			float min_transmittance,
-			const Mask3D* render_masks,
-			const uint32_t n_render_masks,
-			const float* extra_dims_gpu,
+			RenderData& render_data,
 			cudaStream_t stream
 		);
 
@@ -342,28 +306,18 @@ public:
 	);
 	const float* get_inference_extra_dims(cudaStream_t stream) const;
 	void prepare_nerf_masks();
-	void bl_set_render_masks(const std::vector<Mask3D>& render_masks);
 	void render_nerf(CudaRenderBuffer& render_buffer, const Eigen::Vector2i& max_res, const Eigen::Vector2f& focal_length, const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& rolling_shutter, const Eigen::Vector2f& screen_center, cudaStream_t stream);
 	void render_image(CudaRenderBuffer& render_buffer, cudaStream_t stream);
 	void render_frame(const Eigen::Matrix<float, 3, 4>& camera_matrix0, const Eigen::Matrix<float, 3, 4>& camera_matrix1, const Eigen::Vector4f& nerf_rolling_shutter, CudaRenderBuffer& render_buffer, bool to_srgb = true) ;
 	
 	// blender
 	void Testbed::bl_render_frame(
-		const Matrix<float, 3, 4>& camera_matrix,
 		CudaRenderBuffer& render_buffer,
-		bool to_srgb,
-		const DownsampleInfo& ds,
-		bool flip_y,
-		const std::vector<Mask3D>& render_masks
+		RenderData& render_data
 	);
 	void bl_render_nerf(
 		CudaRenderBuffer& render_buffer,
-		const Vector2f& focal_length,
-		const Matrix<float, 3, 4>& camera_matrix,
-		const Vector2f& screen_center,
-		const DownsampleInfo& ds,
-		bool flip_y,
-		const std::vector<Mask3D>& render_masks,
+		RenderData& render_data,
 		cudaStream_t stream
 	);
 
@@ -466,23 +420,11 @@ public:
 	// blender
 	void bl_nerf_render_thread(
 		const pybind11::array_t<float>& result,
-		int width,
-		int height,
-		int spp,
-		bool linear,
-		uint32_t mip,
-		bool flip_y,
-		const std::vector<Mask3D>& render_masks,
+		RenderData& render_data,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 	void bl_request_nerf_render(
-		int width,
-		int height,
-		int spp,
-		bool linear,
-		uint32_t mip,
-		bool flip_y,
-		const std::vector<Mask3D>& render_masks,
+		RenderData& render_data,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 #endif
