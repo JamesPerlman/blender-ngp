@@ -221,6 +221,7 @@ list(APPEND NGP_SOURCES
 	src/marching_cubes.cu
 	src/nerf_data.cu
 	src/nerf_loader.cu
+	src/neural_radiance_field.cu
 	src/render_buffer.cu
 	src/testbed.cu
 	src/testbed_image.cu
@@ -283,6 +284,8 @@ if (NGP_OPTIX)
 
 	list(APPEND NGP_SOURCES ${OPTIX_PTX_HEADER})
 endif()
+
+list(APPEND NGP_INCLUDE_DIRECTORIES "${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
 
 add_library(ngp STATIC ${NGP_SOURCES})
 set_target_properties(ngp PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON CUDA_SEPARABLE_COMPILATION ON)
