@@ -304,6 +304,7 @@ struct DownsampleInfo {
 	Eigen::Vector2i scaled_res;
 	Eigen::Vector2i skip; // number of pixels to skip for cur_level
 
+	DownsampleInfo() = default;
 	// initializer
 	/*
 	tried something crafty here, but it didn't work out.

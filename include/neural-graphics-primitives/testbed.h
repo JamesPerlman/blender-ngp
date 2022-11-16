@@ -19,11 +19,12 @@
 #include <neural-graphics-primitives/camera_path.h>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/discrete_distribution.h>
-#include <neural-graphics-primitives/mask_shapes.cuh>
+#include <neural-graphics-primitives/nerf/mask_3D.cuh>
 #include <neural-graphics-primitives/nerf.h>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/render_buffer.h>
-#include <neural-graphics-primitives/render_data.cuh>
+#include <neural-graphics-primitives/nerf/render_data.cuh>
+#include <neural-graphics-primitives/nerf/render_request.cuh>
 #include <neural-graphics-primitives/sdf.h>
 #include <neural-graphics-primitives/shared_queue.h>
 #include <neural-graphics-primitives/trainable_buffer.cuh>
@@ -173,8 +174,6 @@ public:
 		);
 
 		void bl_init_rays_from_camera(
-			uint32_t padded_output_width,
-			uint32_t n_extra_dims,
 			Eigen::Array4f* frame_buffer,
 			float* depth_buffer,
 			RenderData& render_data,
@@ -313,11 +312,11 @@ public:
 	// blender
 	void Testbed::bl_render_frame(
 		CudaRenderBuffer& render_buffer,
-		RenderData& render_data
+		RenderRequest& render_request
 	);
 	void bl_render_nerf(
 		CudaRenderBuffer& render_buffer,
-		RenderData& render_data,
+		RenderRequest& render_request,
 		cudaStream_t stream
 	);
 
@@ -420,11 +419,11 @@ public:
 	// blender
 	void bl_nerf_render_thread(
 		const pybind11::array_t<float>& result,
-		RenderData& render_data,
+		RenderRequest& render_request,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 	void bl_request_nerf_render(
-		RenderData& render_data,
+		RenderRequest& render_request,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 #endif
@@ -558,6 +557,8 @@ public:
 	std::vector<Mask3D> m_render_masks;
 	uint32_t m_n_render_masks;
 	tcnn::GPUMemory<Mask3D> render_masks_gpu;
+
+	RenderData m_render_data;
 
 	uint32_t m_seed = 1337;
 #ifdef NGP_GUI

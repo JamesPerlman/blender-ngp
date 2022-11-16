@@ -16,11 +16,9 @@
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/json_binding.h>
 #include <neural-graphics-primitives/marching_cubes.h>
-#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/nerf_loader.h>
 #include <neural-graphics-primitives/nerf_network.h>
 #include <neural-graphics-primitives/render_buffer.h>
-#include <neural-graphics-primitives/render_data.cuh>
 #include <neural-graphics-primitives/takikawa_encoding.cuh>
 #include <neural-graphics-primitives/testbed.h>
 #include <neural-graphics-primitives/tinyexr_wrapper.h>
@@ -137,7 +135,9 @@ json Testbed::load_network_config(const fs::path& network_config_path) {
 		result = merge_parent_network_config(result, network_config_path);
 	} else if (equals_case_insensitive(network_config_path.extension(), "msgpack")) {
 		std::ifstream f{network_config_path.str(), std::ios::in | std::ios::binary};
+		printf("gaabb\n");
 		result = json::from_msgpack(f);
+		printf("goobb\n");
 		// we assume parent pointers are already resolved in snapshots.
 	}
 
@@ -2674,7 +2674,7 @@ __global__ void dlss_prep_kernel(
 
 void Testbed::bl_render_frame(
 	CudaRenderBuffer& render_buffer,
-	RenderData& render_data
+	RenderRequest& render_request
 ) {
 	Vector2i max_res = m_window_res.cwiseMax(render_buffer.in_resolution());
 
@@ -2685,15 +2685,15 @@ void Testbed::bl_render_frame(
 
 	bl_render_nerf(
 		render_buffer,
-		render_data,
+		render_request,
 		m_stream.get()
 	);
 
-	render_buffer.set_color_space(render_data.output.color_space);
-	render_buffer.set_tonemap_curve(render_data.output.tonemap_curve);
-	render_buffer.accumulate(render_data.output.exposure, m_stream.get());
+	render_buffer.set_color_space(render_request.output.color_space);
+	render_buffer.set_tonemap_curve(render_request.output.tonemap_curve);
+	render_buffer.accumulate(render_request.output.exposure, m_stream.get());
 	// TODO: different color space here? not sure what tonemap does.
-	render_buffer.tonemap(render_data.output.exposure, render_data.output.background_color, render_data.output.color_space, m_stream.get());
+	render_buffer.tonemap(render_request.output.exposure, render_request.output.background_color, render_request.output.color_space, m_stream.get());
 	CUDA_CHECK_THROW(cudaStreamSynchronize(m_stream.get()));
 }
 
@@ -3008,7 +3008,7 @@ void Testbed::gather_histograms() {
 }
 
 // Increment this number when making a change to the snapshot format
-
+static const size_t SNAPSHOT_FORMAT_VERSION = 1;
 
 void Testbed::save_snapshot(const std::string& filepath_string, bool include_optimizer_state) {
 	fs::path filepath = filepath_string;
@@ -3057,7 +3057,6 @@ void Testbed::load_snapshot(const std::string& filepath_string) {
 	if (snapshot.value("version", 0) < SNAPSHOT_FORMAT_VERSION) {
 		throw std::runtime_error{"Snapshot uses an old format."};
 	}
-
 	m_aabb = snapshot.value("aabb", m_aabb);
 	m_bounding_radius = snapshot.value("bounding_radius", m_bounding_radius);
 

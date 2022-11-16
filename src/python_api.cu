@@ -14,7 +14,6 @@
 
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common_device.cuh>
-#include <neural-graphics-primitives/mask_shapes.cuh>
 #include <neural-graphics-primitives/testbed.h>
 #include <neural-graphics-primitives/thread_pool.h>
 
@@ -190,18 +189,18 @@ py::array_t<float> Testbed::render_to_cpu(int width, int height, int spp, bool l
 
 void Testbed::bl_nerf_render_thread(
 	const py::array_t<float>& result,
-	RenderData& render_data,
+	RenderRequest& render_request,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
     CudaRenderBuffer render_buffer{std::make_shared<CudaSurface2D>()};
-	render_buffer.resize({(int)render_data.output.resolution.x(), (int)render_data.output.resolution.y()});
+	size_t width = render_request.output.resolution.x();
+	size_t height = render_request.output.resolution.y();
+	render_buffer.resize({(int)width, (int)height});
 	render_buffer.reset_accumulation();
 	
-	bl_render_frame(render_buffer, render_data);
+	bl_render_frame(render_buffer, render_request);
 
 	py::buffer_info output_buffer = result.request();
-	size_t width = render_data.output.resolution.x();
-	size_t height = render_data.output.resolution.y();
 	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(output_buffer.ptr, width * sizeof(float) * 4, render_buffer.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
 	render_callback(result);
 
@@ -212,22 +211,22 @@ void Testbed::bl_nerf_render_thread(
 // right now this requires CUDA to copy all the RenderData into the GPU for every rendered frame (minus the snapshots).
 // It would be wise to refactor this to only copy the data that changes between frames.
 void Testbed::bl_request_nerf_render(
-	RenderData& render_data,
+	RenderRequest& render_request,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
 	if (m_currently_rendering) {
 		return;
 	}
 	m_currently_rendering = true;
-	py::array_t<float> result({render_data.output.resolution.y(), render_data.output.resolution.x(), 4});
+	py::array_t<float> result({render_request.output.resolution.y(), render_request.output.resolution.x(), 4});
 
 	if (m_autofocus) {
 		autofocus();
 	}
 
-	// bl_nerf_render_thread(result, width, height, spp, linear, mip, flip_y, render_masks, render_callback);
-	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_data, render_callback);
-	m_render_thread.detach();
+	bl_nerf_render_thread(result, render_request, render_callback);
+	//m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_request, render_callback);
+	//m_render_thread.detach();
 }
 
 py::array_t<float> Testbed::render_with_rolling_shutter_to_cpu(const Eigen::Matrix<float, 3, 4>& camera_transform_start, const Eigen::Matrix<float, 3, 4>& camera_transform_end, const Eigen::Vector4f& rolling_shutter, int width, int height, int spp, bool linear) {
@@ -398,16 +397,19 @@ PYBIND11_MODULE(pyngp, m) {
 		;
 	
 	py::class_<Quadrilateral3D>(m, "Quadrilateral3D")
+		.def_static("Zero", &Quadrilateral3D::Zero)
 		.def(py::init<const Vector3f&, const Vector3f&, const Vector3f&, const Vector3f&>(), py::arg("tl"), py::arg("tr"), py::arg("bl"), py::arg("br"))
 		.def("center", &Quadrilateral3D::center)
 		;
 	
 	py::class_<QuadrilateralHexahedron>(m, "QuadrilateralHexahedronConfig")
+		.def_static("Zero", &QuadrilateralHexahedron::Zero)
 		.def(py::init<const Quadrilateral3D&, const Quadrilateral3D&>(), py::arg("front"), py::arg("back"))
 		.def("center", &QuadrilateralHexahedron::center)
 		;
 	
 	py::class_<SphericalQuadrilateral>(m, "SphericalQuadrilateralConfig")
+		.def_static("Zero", &SphericalQuadrilateral::Zero)
 		.def(py::init<const float&, const float&, const float&>(), py::arg("width"), py::arg("height"), py::arg("curvature"))
 		;
 	
@@ -439,7 +441,7 @@ PYBIND11_MODULE(pyngp, m) {
 		)
 		;
 	
-	py::class_<RenderModifiers>(m, "RenderModifiers")
+	py::class_<RenderModifiersDescriptor>(m, "RenderModifiers")
 		.def(py::init<std::vector<Mask3D>>(), py::arg("masks"))
 		;
 	
@@ -469,18 +471,33 @@ PYBIND11_MODULE(pyngp, m) {
 		)
 		;
 
-	py::class_<RenderData>(m, "RenderData")
+	py::class_<NerfDescriptor>(m, "NerfDescriptor")
+		.def(py::init<
+				const std::string&,
+				const BoundingBox&,
+				const Matrix4f&,
+				const RenderModifiersDescriptor&
+			>(),
+			py::arg("snapshot_path_str"),
+			py::arg("aabb"),
+			py::arg("transform"),
+			py::arg("modifiers")
+		)
+		;
+
+
+	py::class_<RenderRequest>(m, "RenderRequest")
 		.def(py::init<
 				const RenderOutputProperties&,
 				const RenderCameraProperties&,
-				const RenderModifiers&,
-				const std::vector<NerfScene>&,
+				const RenderModifiersDescriptor&,
+				const std::vector<NerfDescriptor>&,
 				const BoundingBox&
 			>(),
 			py::arg("output"),
 			py::arg("camera"),
 			py::arg("modifiers"),
-			py::arg("scenes"),
+			py::arg("nerfs"),
 			py::arg("aabb")
 		)
 		;

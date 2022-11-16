@@ -19,8 +19,8 @@
 
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common.h>
-#include <neural-graphics-primitives/nerf_scene.cuh>
-#include <neural-graphics-primitives/render_modifiers.cuh>
+#include <neural-graphics-primitives/nerf/nerf_descriptor.cuh>
+#include <neural-graphics-primitives/nerf/render_modifiers_descriptor.cuh>
 
 NGP_NAMESPACE_BEGIN
 
@@ -56,7 +56,9 @@ struct RenderOutputProperties {
         , exposure(exposure)
         , background_color(background_color)
         , flip_y(flip_y)
-        {};
+    {};
+
+    RenderOutputProperties() = default;
 };
 
 // TODO: abstract these into Camera structs somehow
@@ -89,27 +91,29 @@ struct RenderCameraProperties {
         , focus_z(focus_z)
         , spherical_quadrilateral(spherical_quadrilateral)
         , quadrilateral_hexahedron(quadrilateral_hexahedron)
-        {};
+    {};
+    
+    RenderCameraProperties() = default;
 };
 
-struct RenderData {
+struct RenderRequest {
     RenderOutputProperties output;
     RenderCameraProperties camera;
-    RenderModifiers modifiers;
-    std::vector<NerfScene> scenes;
+    RenderModifiersDescriptor modifiers;
+    std::vector<NerfDescriptor> nerfs;
     BoundingBox aabb;
 
-    RenderData(
+    RenderRequest(
         const RenderOutputProperties& output,
         const RenderCameraProperties& camera,
-        const RenderModifiers& modifiers,
-        const std::vector<NerfScene>& scenes,
+        const RenderModifiersDescriptor& modifiers,
+        const std::vector<NerfDescriptor>& nerfs,
         const BoundingBox& aabb
     )
         : output(output)
         , camera(camera)
         , modifiers(modifiers)
-        , scenes(scenes)
+        , nerfs(nerfs)
         , aabb(aabb)
         {};
 };

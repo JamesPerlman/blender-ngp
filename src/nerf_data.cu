@@ -1,5 +1,5 @@
 #include <neural-graphics-primitives/common.h>
-#include <neural-graphics-primitives/nerf_scene.cuh>
+#include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
 
 #include <tiny-cuda-nn/common.h>
 #include <tiny-cuda-nn/reduce_sum.h>
@@ -58,17 +58,17 @@ __global__ void nerf_bitfield_max_pool(
     next_level[tcnn::morton3D(x, y, z)] |= bits;
 }
 
- void NerfScene::update_density_grid_mean_and_bitfield(cudaStream_t stream) {
+ void NeuralRadianceField::update_density_grid_mean_and_bitfield(cudaStream_t stream) {
     const uint32_t n_elements = grid_volume();
 
     size_t size_including_mips = grid_mip_offset(num_cascades) / 8;
     density_grid_bitfield.enlarge(size_including_mips);
-    density_grid_mean.enlarge(reduce_sum_workspace_size(n_elements));
+    density_grid_mean.enlarge(tcnn::reduce_sum_workspace_size(n_elements));
 
     CUDA_CHECK_THROW(cudaMemsetAsync(density_grid_mean.data(), 0, sizeof(float), stream));
-    reduce_sum(density_grid.data(), [n_elements] __device__ (float val) { return fmaxf(val, 0.f) / (n_elements); }, density_grid_mean.data(), n_elements, stream);
+    tcnn::reduce_sum(density_grid.data(), [n_elements] __device__ (float val) { return fmaxf(val, 0.f) / (n_elements); }, density_grid_mean.data(), n_elements, stream);
 
-    linear_kernel(nerf_grid_to_bitfield, 0, stream,
+    tcnn::linear_kernel(nerf_grid_to_bitfield, 0, stream,
         n_elements/8 * num_cascades,
         n_elements/8 * (max_cascade + 1),
         density_grid.data(),
@@ -78,7 +78,7 @@ __global__ void nerf_bitfield_max_pool(
     );
 
     for (uint32_t level = 1; level < num_cascades; ++level) {
-        linear_kernel(nerf_bitfield_max_pool, 0, stream,
+        tcnn::linear_kernel(nerf_bitfield_max_pool, 0, stream,
             n_elements/64,
             grid_size,
             get_density_grid_bitfield_mip(level-1),
