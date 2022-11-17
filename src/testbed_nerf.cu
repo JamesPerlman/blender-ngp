@@ -2519,7 +2519,7 @@ void Testbed::NerfTracer::bl_init_rays_from_camera(
 		render_data.modifiers.masks.size(),
 		render_data.output.ds,
 		render_data.camera,
-		render_data.aabb
+		nerf.aabb
 	);
 
 	nerf.inference.n_rays_initialized = n_pixels;
@@ -2535,7 +2535,7 @@ void Testbed::NerfTracer::bl_init_rays_from_camera(
 		nerf.density_grid_bitfield.data(),
 		nerf.cone_angle_constant,
 		nerf.grid_size,
-		render_data.aabb
+		nerf.aabb
 	);
 }
 
