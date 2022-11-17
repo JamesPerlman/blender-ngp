@@ -2676,12 +2676,7 @@ void Testbed::bl_render_frame(
 	CudaRenderBuffer& render_buffer,
 	RenderRequest& render_request
 ) {
-	Vector2i max_res = m_window_res.cwiseMax(render_buffer.in_resolution());
-
 	render_buffer.clear_frame(m_stream.get());
-
-	Vector2f focal_length = calc_focal_length(render_buffer.in_resolution(), m_fov_axis, m_zoom);
-	Vector2f screen_center = render_screen_center();
 
 	bl_render_nerf(
 		render_buffer,

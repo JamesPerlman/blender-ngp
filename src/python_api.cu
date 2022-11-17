@@ -211,7 +211,7 @@ void Testbed::bl_nerf_render_thread(
 // right now this requires CUDA to copy all the RenderData into the GPU for every rendered frame (minus the snapshots).
 // It would be wise to refactor this to only copy the data that changes between frames.
 void Testbed::bl_request_nerf_render(
-	RenderRequest& render_request,
+	RenderRequest render_request,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
 	if (m_currently_rendering) {
@@ -224,9 +224,9 @@ void Testbed::bl_request_nerf_render(
 		autofocus();
 	}
 
-	bl_nerf_render_thread(result, render_request, render_callback);
-	//m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_request, render_callback);
-	//m_render_thread.detach();
+	//bl_nerf_render_thread(result, render_request, render_callback);
+	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_request, render_callback);
+	m_render_thread.detach();
 }
 
 py::array_t<float> Testbed::render_with_rolling_shutter_to_cpu(const Eigen::Matrix<float, 3, 4>& camera_transform_start, const Eigen::Matrix<float, 3, 4>& camera_transform_end, const Eigen::Vector4f& rolling_shutter, int width, int height, int spp, bool linear) {

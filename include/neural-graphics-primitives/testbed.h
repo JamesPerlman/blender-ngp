@@ -423,7 +423,7 @@ public:
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 	void bl_request_nerf_render(
-		RenderRequest& render_request,
+		RenderRequest render_request,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
 #endif

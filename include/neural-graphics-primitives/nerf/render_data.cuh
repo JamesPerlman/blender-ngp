@@ -74,7 +74,7 @@ struct RenderData {
     void load_nerfs() {
         for (NeuralRadianceField& nerf : nerfs) {
             nerf.load_snapshot();
-
+			nerf.modifiers.copy_from_host();
             // nerf.inference.enlarge_workspace(...); ?
         }
     }
