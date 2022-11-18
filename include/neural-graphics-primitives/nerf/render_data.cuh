@@ -19,6 +19,7 @@
 
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common.h>
+#include <neural-graphics-primitives/nerf/nerf_render_proxy.cuh>
 #include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
 #include <neural-graphics-primitives/nerf/render_request.cuh>
 #include <neural-graphics-primitives/nerf/render_modifiers.cuh>
@@ -26,10 +27,16 @@
 NGP_NAMESPACE_BEGIN
 
 struct RenderData {
+private:
+
+	std::vector<NeuralRadianceField> _nerfs;
+	std::vector<NerfRenderProxy> _proxies;
+
+public:
+
     RenderOutputProperties output;
     RenderCameraProperties camera;
     RenderModifiers modifiers;
-    std::vector<NeuralRadianceField> nerfs;
     BoundingBox aabb;
 
     RenderData() {};
@@ -50,7 +57,7 @@ struct RenderData {
     void update_nerfs(const std::vector<NerfDescriptor>& descriptors) {
         // delete if nerf has no matching descriptor
         static_cast<void>( // discard result from remove_if iterator
-            std::remove_if(nerfs.begin(), nerfs.end(), [&](const NeuralRadianceField& nerf) {
+            std::remove_if(_nerfs.begin(), _nerfs.end(), [&](const NeuralRadianceField& nerf) {
                 auto result = std::find_if(descriptors.begin(), descriptors.end(), [&](const NerfDescriptor& descriptor) {
                     return descriptor.snapshot_path == nerf.snapshot_path;
                 });
@@ -58,26 +65,50 @@ struct RenderData {
                 return result == descriptors.end();
             })
         );
-        // todo: update nerfs
 
         // add new nerfs
         for (const NerfDescriptor& desc : descriptors) {
-            auto result = std::find_if(nerfs.begin(), nerfs.end(), [&](const NeuralRadianceField& nerf) {
+            auto result = std::find_if(_nerfs.begin(), _nerfs.end(), [&](const NeuralRadianceField& nerf) {
                 return nerf.snapshot_path == desc.snapshot_path;
             });
-            if (result == nerfs.end()) {
-                nerfs.emplace_back(desc);
+            if (result == _nerfs.end()) {
+                _nerfs.emplace_back(desc);
             }
         }
+
+		// update render proxies
+		_proxies.clear();
+
+
+		for (NeuralRadianceField& nerf : _nerfs) {
+			auto desc = std::find_if(descriptors.begin(), descriptors.end(), [&](const NerfDescriptor& descriptor) {
+				return descriptor.snapshot_path == nerf.snapshot_path;
+			});
+
+			if (desc == descriptors.end()) {
+				printf("Somehow a descriptor was not found for this nerf.  Something is very, very wrong.\n");
+				continue;
+			}
+
+			_proxies.emplace_back(*desc, nerf);
+		}
+
     }
 
     void load_nerfs() {
-        for (NeuralRadianceField& nerf : nerfs) {
+        for (NeuralRadianceField& nerf : _nerfs) {
             nerf.load_snapshot();
-			nerf.modifiers.copy_from_host();
             // nerf.inference.enlarge_workspace(...); ?
         }
+
+		for (NerfRenderProxy& proxy : _proxies) {
+			proxy.modifiers.copy_from_host();
+		}
     }
+
+	std::vector<NerfRenderProxy>& get_renderables() {
+		return _proxies;
+	}
 };
 
 NGP_NAMESPACE_END

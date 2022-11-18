@@ -220,6 +220,24 @@ struct BoundingBox {
 			p.z() >= min.z() && p.z() <= max.z();
 	}
 
+	// TODO: this could be its own util, doesn't really need to be in BoundingBox
+	NGP_HOST_DEVICE Eigen::Vector3f localized_point(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& p) const {
+		return (aabb_to_local * p.homogeneous()).head<3>();
+	}
+
+	NGP_HOST_DEVICE Eigen::Vector3f localized_direction(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& d) const {
+		// TODO: can probably remove some of these normalized calls to optimize
+		return (aabb_to_local.topLeftCorner<3, 3>() * d.normalized()).normalized() * d.norm();
+	}
+
+	NGP_HOST_DEVICE bool contains_localize(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& p) const {
+		return contains(localized_point(aabb_to_local, p));
+	}
+
+	NGP_HOST_DEVICE Eigen::Vector2f ray_intersect_localize(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& pos, const Eigen::Vector3f& dir) const {
+		return ray_intersect(localized_point(aabb_to_local, pos), localized_direction(aabb_to_local, dir));
+	}
+
 	/// Calculate the squared point-AABB distance
 	NGP_HOST_DEVICE float distance(const Eigen::Vector3f& p) const {
 		return sqrt(distance_sq(p));

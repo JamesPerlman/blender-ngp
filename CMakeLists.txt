@@ -221,7 +221,7 @@ list(APPEND NGP_SOURCES
 	src/marching_cubes.cu
 	src/nerf_data.cu
 	src/nerf_loader.cu
-	src/neural_radiance_field.cu
+	src/nerf_render_workspace.cu
 	src/render_buffer.cu
 	src/testbed.cu
 	src/testbed_image.cu

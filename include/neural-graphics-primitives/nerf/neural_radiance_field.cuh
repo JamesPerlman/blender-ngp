@@ -46,9 +46,7 @@ NGP_NAMESPACE_BEGIN
 
 struct NeuralRadianceField {
     ::filesystem::path snapshot_path;
-    BoundingBox aabb;
-    RenderModifiers modifiers;
-    Eigen::Matrix4f transform;
+	BoundingBox train_aabb;
 
     tcnn::GPUMemory<float> density_grid; // NERF_GRIDSIZE()^3 grid of EMA smoothed densities from the network
     tcnn::GPUMemory<uint8_t> density_grid_bitfield;
@@ -66,183 +64,51 @@ struct NeuralRadianceField {
 
     nlohmann::json network_config = {};
 
+	struct LevelStats {
+		float mean() { return count ? (x / (float)count) : 0.f; }
+		float variance() { return count ? (xsquared - (x * x) / (float)count) / (float)count : 0.f; }
+		float sigma() { return sqrtf(variance()); }
+		float fraczero() { return (float)numzero / float(count + numzero); }
+		float fracquant() { return (float)numquant / float(count); }
+
+		float x;
+		float xsquared;
+		float min;
+		float max;
+		int numzero;
+		int numquant;
+		int count;
+	};
+
+	uint32_t prev_n_elements = 0;
+
+	default_rng_t rng;
+	uint32_t seed = 1337;
+	uint32_t aabb_scale = 1;
+	uint32_t num_levels = 0;
+	uint32_t base_grid_resolution;
+	float desired_resolution = 2048.0f; // Desired resolution of the finest hashgrid level over the unit cube
+	float per_level_scale;
+	NetworkDims network_dims;
+	std::shared_ptr<NerfNetwork<precision_t>> network;
+	std::shared_ptr<tcnn::Encoding<precision_t>> encoding;
+	std::shared_ptr<tcnn::Trainer<float, precision_t, precision_t>> trainer;
+	std::shared_ptr<tcnn::Loss<precision_t>> m_loss;
+	std::shared_ptr<tcnn::Optimizer<precision_t>> m_optimizer;
+
+	uint32_t n_encoding_params;
+	uint32_t n_extra_dims = 0;
+
+	std::vector<LevelStats> level_stats;
+	std::vector<LevelStats> first_layer_column_stats;
+
     bool is_loaded = false;
 
     NeuralRadianceField(const NerfDescriptor& descriptor)
         : snapshot_path(descriptor.snapshot_path)
-        , aabb(descriptor.aabb)
-        , modifiers(descriptor.modifiers)
-        , transform(descriptor.transform)
     {};
 
-	NeuralRadianceField() : snapshot_path(""), aabb(BoundingBox({ 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0 })), modifiers(), transform(Eigen::Matrix4f::Identity()) {};
-
-    struct Inference {
-
-        struct LevelStats {
-            float mean() { return count ? (x / (float)count) : 0.f; }
-            float variance() { return count ? (xsquared - (x * x) / (float)count) / (float)count : 0.f; }
-            float sigma() { return sqrtf(variance()); }
-            float fraczero() { return (float)numzero / float(count + numzero); }
-            float fracquant() { return (float)numquant / float(count); }
-
-            float x;
-            float xsquared;
-            float min;
-            float max;
-            int numzero;
-            int numquant;
-            int count;
-        };
-        
-        uint32_t prev_n_elements = 0;
-
-        default_rng_t rng;
-        uint32_t seed = 1337;
-        uint32_t aabb_scale = 1;
-        uint32_t num_levels = 0;
-        uint32_t base_grid_resolution;
-        float desired_resolution = 2048.0f; // Desired resolution of the finest hashgrid level over the unit cube
-        float per_level_scale;
-        NetworkDims network_dims;
-        std::shared_ptr<NerfNetwork<precision_t>> network;
-        std::shared_ptr<tcnn::Encoding<precision_t>> encoding;
-        std::shared_ptr<tcnn::Trainer<float, precision_t, precision_t>> trainer;    
-        std::shared_ptr<tcnn::Loss<precision_t>> m_loss;
-        std::shared_ptr<tcnn::Optimizer<precision_t>> m_optimizer;
-
-        uint32_t n_encoding_params;
-        uint32_t n_extra_dims = 0;
-
-        std::vector<LevelStats> level_stats;
-        std::vector<LevelStats> first_layer_column_stats;
-
-        
-		RaysNerfSoa rays[2];
-		RaysNerfSoa rays_hit;
-		precision_t* network_output;
-		float* network_input;
-		tcnn::GPUMemory<uint32_t> hit_counter;
-		tcnn::GPUMemory<uint32_t> alive_counter;
-		uint32_t n_rays_initialized = 0;
-        uint32_t n_rays_alive = 0;
-		tcnn::GPUMemoryArena::Allocation scratch_alloc = {};
-
-        uint32_t min_steps_inbetween_compaction = 1;
-        uint32_t max_steps_inbetween_compaction = 8;
-
-        Inference(nlohmann::json config = {})
-            : hit_counter(1)
-            , alive_counter(1)
-        {
-            if (config.empty()) {
-                return;
-            }
-
-            rng = default_rng_t{seed};
-
-            nlohmann::json& encoding_config = config["encoding"];
-            nlohmann::json& loss_config = config["loss"];
-            nlohmann::json& optimizer_config = config["optimizer"];
-            nlohmann::json& network_config = config["network"];
-
-            network_dims = {};
-            network_dims.n_input = sizeof(NerfCoordinate) / sizeof(float);
-            network_dims.n_output = 4;
-            network_dims.n_pos = sizeof(NerfPosition) / sizeof(float);
-
-            // Some of the Nerf-supported losses are not supported by tcnn::Loss,
-            // so just create a dummy L2 loss there. The NeRF code path will bypass
-            // the tcnn::Loss in any case.
-            loss_config["otype"] = "L2";
-
-
-            aabb_scale = config["snapshot"]["nerf"]["aabb_scale"];
-
-            // Automatically determine certain parameters if we're dealing with the (hash)grid encoding
-            if (tcnn::to_lower(encoding_config.value("otype", "OneBlob")).find("grid") != std::string::npos) {
-                encoding_config["n_pos_dims"] = network_dims.n_pos;
-                const uint32_t n_features_per_level = encoding_config.value("n_features_per_level", 2u);
-
-                if (encoding_config.contains("n_features") && encoding_config["n_features"] > 0) {
-                    num_levels = (uint32_t)encoding_config["n_features"] / n_features_per_level;
-                } else {
-                    num_levels = encoding_config.value("n_levels", 16u);
-                }
-                level_stats.resize(num_levels);
-                first_layer_column_stats.resize(num_levels);
-
-                const uint32_t log2_hashmap_size = encoding_config.value("log2_hashmap_size", 15);
-                base_grid_resolution = encoding_config.value("base_resolution", 0);
-                if (!base_grid_resolution) {
-                    base_grid_resolution = 1u << ((log2_hashmap_size) / network_dims.n_pos);
-                    encoding_config["base_resolution"] = base_grid_resolution;
-                }
-
-
-                // Automatically determine suitable per_level_scale
-                per_level_scale = encoding_config.value("per_level_scale", 0.0f);
-                if (per_level_scale <= 0.0f && num_levels > 1) {
-                    per_level_scale = std::exp(std::log(desired_resolution * (float)aabb_scale / (float)base_grid_resolution) / (num_levels - 1));
-                    encoding_config["per_level_scale"] = per_level_scale;
-                }
-                tlog::info()
-                    << "GridEncoding: "
-                    << " Nmin=" << base_grid_resolution
-                    << " b=" << per_level_scale
-                    << " F=" << n_features_per_level
-                    << " T=2^" << log2_hashmap_size
-                    << " L=" << num_levels
-                    ;
-            }
-
-            nlohmann::json& dir_encoding_config = config["dir_encoding"];
-            nlohmann::json& rgb_network_config = config["rgb_network"];
-            uint32_t n_dir_dims = 3;
-            network = std::make_shared<NerfNetwork<precision_t>>(
-                network_dims.n_pos,
-                n_dir_dims,
-                n_extra_dims,
-                network_dims.n_pos + 1, // The offset of 1 comes from the dt member variable of NerfCoordinate. HACKY
-                encoding_config,
-                dir_encoding_config,
-                network_config,
-                rgb_network_config
-            );
-            encoding = network->encoding();
-            n_encoding_params = encoding->n_params() + network->dir_encoding()->n_params();
-            tlog::info()
-                << "Density model: " << network_dims.n_pos
-                << "--[" << std::string(encoding_config["otype"])
-                << "]-->" << network->encoding()->padded_output_width()
-                << "--[" << std::string(network_config["otype"])
-                << "(neurons=" << (int)network_config["n_neurons"] << ",layers=" << ((int)network_config["n_hidden_layers"]+2) << ")"
-                << "]-->" << 1
-                ;
-            tlog::info()
-                << "Color model:   " << n_dir_dims
-                << "--[" << std::string(dir_encoding_config["otype"])
-                << "]-->" << network->dir_encoding()->padded_output_width() << "+" << network_config.value("n_output_dims", 16u)
-                << "--[" << std::string(rgb_network_config["otype"])
-                << "(neurons=" << (int)rgb_network_config["n_neurons"] << ",layers=" << ((int)rgb_network_config["n_hidden_layers"]+2) << ")"
-                << "]-->" << 3
-                ;
-            size_t n_network_params = network->n_params() - n_encoding_params;
-            tlog::info() << "  total_encoding_params=" << n_encoding_params << " total_network_params=" << n_network_params;
-
-            
-            m_loss.reset(tcnn::create_loss<precision_t>(loss_config));
-            m_optimizer.reset(tcnn::create_optimizer<precision_t>(optimizer_config));
-            trainer = std::make_shared<tcnn::Trainer<float, precision_t, precision_t>>(network, m_optimizer, m_loss, seed);
-            trainer->deserialize(config["snapshot"]);
-        };
-
-		void enlarge_workspace(size_t n_elements, cudaStream_t stream);
-
-        void clear_workspace() {
-            scratch_alloc = {};
-        }
-    } inference = {};
+	NeuralRadianceField() : snapshot_path("") {};
 
     // TODO:
     // const NerfTrainingConfig training_config;
@@ -291,7 +157,7 @@ struct NeuralRadianceField {
         }
         
         grid_size = snapshot["density_grid_size"];
-        aabb = snapshot.value("aabb", aabb);
+        train_aabb = snapshot.value("aabb", train_aabb);
 
         max_cascade = 0;
 	    uint32_t aabb_scale = snapshot["nerf"]["aabb_scale"];
@@ -310,16 +176,111 @@ struct NeuralRadianceField {
             density_grid[i] = (float)density_grid_fp16[i];
         });
         if (density_grid.size() == grid_volume() * (max_cascade + 1)) {
-            printf("foober\n");
             update_density_grid_mean_and_bitfield(nullptr);
         } else if (density_grid.size() != 0) {
             // A size of 0 indicates that the density grid was never populated, which is a valid state of a (yet) untrained model.
             throw std::runtime_error{"Incompatible number of grid cascades."};
         }
-        network_config = config;
 
-        inference = Inference(config);
-        is_loaded = true;
+		rng = default_rng_t{ seed };
+
+		nlohmann::json& encoding_config = config["encoding"];
+		nlohmann::json& loss_config = config["loss"];
+		nlohmann::json& optimizer_config = config["optimizer"];
+		nlohmann::json& network_config = config["network"];
+
+		network_dims = {};
+		network_dims.n_input = sizeof(NerfCoordinate) / sizeof(float);
+		network_dims.n_output = 4;
+		network_dims.n_pos = sizeof(NerfPosition) / sizeof(float);
+
+		// Some of the Nerf-supported losses are not supported by tcnn::Loss,
+		// so just create a dummy L2 loss there. The NeRF code path will bypass
+		// the tcnn::Loss in any case.
+		loss_config["otype"] = "L2";
+
+
+		aabb_scale = config["snapshot"]["nerf"]["aabb_scale"];
+
+		// Automatically determine certain parameters if we're dealing with the (hash)grid encoding
+		if (tcnn::to_lower(encoding_config.value("otype", "OneBlob")).find("grid") != std::string::npos) {
+			encoding_config["n_pos_dims"] = network_dims.n_pos;
+			const uint32_t n_features_per_level = encoding_config.value("n_features_per_level", 2u);
+
+			if (encoding_config.contains("n_features") && encoding_config["n_features"] > 0) {
+				num_levels = (uint32_t)encoding_config["n_features"] / n_features_per_level;
+			}
+			else {
+				num_levels = encoding_config.value("n_levels", 16u);
+			}
+			level_stats.resize(num_levels);
+			first_layer_column_stats.resize(num_levels);
+
+			const uint32_t log2_hashmap_size = encoding_config.value("log2_hashmap_size", 15);
+			base_grid_resolution = encoding_config.value("base_resolution", 0);
+			if (!base_grid_resolution) {
+				base_grid_resolution = 1u << ((log2_hashmap_size) / network_dims.n_pos);
+				encoding_config["base_resolution"] = base_grid_resolution;
+			}
+
+
+			// Automatically determine suitable per_level_scale
+			per_level_scale = encoding_config.value("per_level_scale", 0.0f);
+			if (per_level_scale <= 0.0f && num_levels > 1) {
+				per_level_scale = std::exp(std::log(desired_resolution * (float)aabb_scale / (float)base_grid_resolution) / (num_levels - 1));
+				encoding_config["per_level_scale"] = per_level_scale;
+			}
+			tlog::info()
+				<< "GridEncoding: "
+				<< " Nmin=" << base_grid_resolution
+				<< " b=" << per_level_scale
+				<< " F=" << n_features_per_level
+				<< " T=2^" << log2_hashmap_size
+				<< " L=" << num_levels
+				;
+		}
+
+		nlohmann::json& dir_encoding_config = config["dir_encoding"];
+		nlohmann::json& rgb_network_config = config["rgb_network"];
+		uint32_t n_dir_dims = 3;
+		network = std::make_shared<NerfNetwork<precision_t>>(
+			network_dims.n_pos,
+			n_dir_dims,
+			n_extra_dims,
+			network_dims.n_pos + 1, // The offset of 1 comes from the dt member variable of NerfCoordinate. HACKY
+			encoding_config,
+			dir_encoding_config,
+			network_config,
+			rgb_network_config
+			);
+		encoding = network->encoding();
+		n_encoding_params = encoding->n_params() + network->dir_encoding()->n_params();
+		tlog::info()
+			<< "Density model: " << network_dims.n_pos
+			<< "--[" << std::string(encoding_config["otype"])
+			<< "]-->" << network->encoding()->padded_output_width()
+			<< "--[" << std::string(network_config["otype"])
+			<< "(neurons=" << (int)network_config["n_neurons"] << ",layers=" << ((int)network_config["n_hidden_layers"] + 2) << ")"
+			<< "]-->" << 1
+			;
+		tlog::info()
+			<< "Color model:   " << n_dir_dims
+			<< "--[" << std::string(dir_encoding_config["otype"])
+			<< "]-->" << network->dir_encoding()->padded_output_width() << "+" << network_config.value("n_output_dims", 16u)
+			<< "--[" << std::string(rgb_network_config["otype"])
+			<< "(neurons=" << (int)rgb_network_config["n_neurons"] << ",layers=" << ((int)rgb_network_config["n_hidden_layers"] + 2) << ")"
+			<< "]-->" << 3
+			;
+		size_t n_network_params = network->n_params() - n_encoding_params;
+		tlog::info() << "  total_encoding_params=" << n_encoding_params << " total_network_params=" << n_network_params;
+
+
+		m_loss.reset(tcnn::create_loss<precision_t>(loss_config));
+		m_optimizer.reset(tcnn::create_optimizer<precision_t>(optimizer_config));
+		trainer = std::make_shared<tcnn::Trainer<float, precision_t, precision_t>>(network, m_optimizer, m_loss, seed);
+		trainer->deserialize(config["snapshot"]);
+
+		is_loaded = true;
     }
 };
 

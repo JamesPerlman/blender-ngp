@@ -1,17 +1,18 @@
 
 
 #include <Eigen/Dense>
+
 #include <tiny-cuda-nn/common.h>
+
 #include <neural-graphics-primitives/common.h>
-#include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
+#include <neural-graphics-primitives/nerf/nerf_render_workspace.cuh>
 
 NGP_NAMESPACE_BEGIN
 
-void NeuralRadianceField::Inference::enlarge_workspace(size_t n_elements, cudaStream_t stream) {
+void NerfRenderWorkspace::enlarge(size_t n_elements, size_t n_extra_dims, size_t padded_output_width, cudaStream_t stream) {
 	n_elements = tcnn::next_multiple(n_elements, size_t(tcnn::batch_size_granularity));
 	size_t num_floats = sizeof(NerfCoordinate) / 4 + n_extra_dims;
-	size_t padded_output_width = network->padded_output_width();
-	printf("%lu <_> %lu\n", (uint32_t)num_floats, (uint32_t)padded_output_width);
+
 	auto scratch = tcnn::allocate_workspace_and_distribute<
 		Eigen::Array4f, float, NerfPayload, // m_rays[0]
 		Eigen::Array4f, float, NerfPayload, // m_rays[1]
