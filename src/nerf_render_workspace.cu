@@ -26,7 +26,7 @@ void NerfRenderWorkspace::enlarge(size_t n_elements, size_t n_extra_dims, size_t
 		n_elements, n_elements, n_elements,
 		n_elements * max_steps_inbetween_compaction * padded_output_width,
 		n_elements * max_steps_inbetween_compaction * num_floats
-		);
+	);
 
 	rays[0].set(std::get<0>(scratch), std::get<1>(scratch), std::get<2>(scratch), n_elements);
 	rays[1].set(std::get<3>(scratch), std::get<4>(scratch), std::get<5>(scratch), n_elements);

@@ -2503,15 +2503,10 @@ void Testbed::NerfTracer::init_rays_from_camera(
 void Testbed::NerfTracer::bl_init_rays_from_camera(
 	Eigen::Array4f* frame_buffer,
 	float* depth_buffer,
-	RenderData& render_data,
+	const RenderData& render_data,
+	NerfRenderProxy& nerf,
 	cudaStream_t stream
 ) {
-	// Make sure we have enough memory reserved to render at the requested resolution
-	size_t n_pixels = (size_t)(render_data.output.ds.scaled_pixels);
-	uint32_t nerf_index = 0;
-	NerfRenderProxy& nerf = render_data.get_renderables()[nerf_index];
-	nerf.workspace.enlarge(n_pixels, nerf.field.n_extra_dims, nerf.field.network->padded_output_width(), stream);
-
 	const dim3 threads = { 16, 8, 1 };
 	const dim3 blocks = {
 		div_round_up((unsigned int)render_data.output.ds.scaled_res.x(), threads.x),
@@ -2531,11 +2526,6 @@ void Testbed::NerfTracer::bl_init_rays_from_camera(
 		nerf.aabb,
 		nerf.render_aabb_to_local
 	);
-
-	nerf.workspace.n_rays_initialized = n_pixels;
-
-	CUDA_CHECK_THROW(cudaMemsetAsync(nerf.workspace.rays[0].rgba, 0, n_pixels * sizeof(Array4f), stream));
-	CUDA_CHECK_THROW(cudaMemsetAsync(nerf.workspace.rays[0].depth, 0, n_pixels * sizeof(float), stream));
 
 	linear_kernel(bl_advance_pos_nerf, 0, stream,
 		0, // todo: sample_index
@@ -3039,18 +3029,29 @@ void Testbed::bl_render_nerf(
 
 	ScopeGuard tmp_memory_guard{[&]() {
 		for (NerfRenderProxy& nerf : nerfs) {
-			printf("cleer\n");
 			nerf.workspace.clear();
 		}
 	}};
 
+	// allocate workspace for nerfs
+	size_t n_pixels = (size_t)(m_render_data.output.ds.scaled_pixels);
 
-	m_nerf.tracer.bl_init_rays_from_camera(
-		render_buffer.frame_buffer(),
-		render_buffer.depth_buffer(),
-		m_render_data,
-		stream
-	);
+	for (NerfRenderProxy& nerf : nerfs) {
+		// Make sure we have enough memory reserved to render at the requested resolution
+		nerf.workspace.enlarge(n_pixels, nerf.field.n_extra_dims, nerf.field.network->padded_output_width(), stream);
+		nerf.workspace.n_rays_initialized = n_pixels;
+
+		m_nerf.tracer.bl_init_rays_from_camera(
+			render_buffer.frame_buffer(),
+			render_buffer.depth_buffer(),
+			m_render_data,
+			nerf,
+			stream
+		);
+
+		CUDA_CHECK_THROW(cudaMemsetAsync(nerf.workspace.rays[0].rgba, 0, n_pixels * sizeof(Array4f), stream));
+		CUDA_CHECK_THROW(cudaMemsetAsync(nerf.workspace.rays[0].depth, 0, n_pixels * sizeof(float), stream));
+	}
 
 	float depth_scale = 1.0f;// / m_nerf.training.dataset.scale;
 	uint32_t n_hit = m_nerf.tracer.bl_trace(m_render_data, stream);
