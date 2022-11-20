@@ -37,8 +37,12 @@ private:
 	uint32_t _n_input_elements;
 	uint32_t _n_output_elements;
 
-	precision_t* network_input;
-	float* network_output;
+	uint32_t _stride_between_proxy_rays;
+	uint32_t _stride_between_network_inputs;
+	uint32_t _stride_between_network_outputs;
+
+	float* network_input;
+	precision_t* network_output;
 
 	NerfProxyRay* proxy_rays[2];
 	
@@ -68,9 +72,15 @@ public:
 
 		_n_nerfs = n_nerfs;
 		_n_global_rays = get_n_pixels_padded(n_pixels);
-		_n_proxy_rays = _n_nerfs * _n_global_rays;
-		_n_input_elements = max_steps_per_compaction * _n_proxy_rays * sizeof(NerfCoordinate) / 4;
-		_n_output_elements = max_steps_per_compaction * _n_proxy_rays * padded_output_width;
+
+		_stride_between_proxy_rays = _n_global_rays;
+		_n_proxy_rays = n_nerfs * _stride_between_proxy_rays;
+
+		_stride_between_network_inputs = _n_global_rays * max_steps_per_compaction * sizeof(NerfCoordinate) / 4;
+		_n_input_elements = n_nerfs * _stride_between_network_inputs;
+
+		_stride_between_network_outputs = _n_global_rays * max_steps_per_compaction * padded_output_width;
+		_n_output_elements = n_nerfs * _stride_between_network_outputs;
 
 		auto scratch = tcnn::allocate_workspace_and_distribute<
 			NerfGlobalRay,
@@ -78,8 +88,8 @@ public:
 			NerfGlobalRay,
 			NerfProxyRay,
 			NerfProxyRay,
-			precision_t,
-			float
+			float,
+			precision_t
 		>(
 			stream, &scratch_alloc,
 			_n_global_rays,
@@ -103,23 +113,31 @@ public:
 	}
 
 	uint32_t get_stride_between_proxy_rays() const {
-		return _n_global_rays;
+		return _stride_between_proxy_rays;
 	}
 
 	uint32_t get_n_proxy_rays() const {
 		return _n_proxy_rays;
 	}
 
-	precision_t* get_nerf_network_input(uint32_t idx) const {
-		return &network_input[idx * get_stride_between_proxy_rays()];
+	uint32_t get_stride_between_network_inputs() const {
+		return _stride_between_network_inputs;
 	}
 
-	float* get_nerf_network_output(uint32_t idx) const {
-		return &network_output[idx * get_stride_between_proxy_rays()];
+	uint32_t get_stride_between_network_outputs() const {
+		return _stride_between_network_outputs;
+	}
+
+	float* get_nerf_network_input(uint32_t idx) const {
+		return &network_input[idx * _stride_between_network_inputs];
+	}
+
+	precision_t* get_nerf_network_output(uint32_t idx) const {
+		return &network_output[idx * _stride_between_network_outputs];
 	}
 
 	NerfProxyRay* get_proxy_rays(uint32_t buffer_idx, uint32_t nerf_idx) const {
-		return &proxy_rays[buffer_idx][nerf_idx * get_stride_between_proxy_rays()];
+		return &proxy_rays[buffer_idx][nerf_idx * _stride_between_proxy_rays];
 	}
 
 	NerfProxyRay* get_proxy_rays_buffer(uint32_t buffer_idx) const {

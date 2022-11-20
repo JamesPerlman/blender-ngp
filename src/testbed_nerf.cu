@@ -1198,7 +1198,9 @@ __global__ void bl_composite_kernel_nerf(
 	const uint32_t proxy_ray_stride_between_nerfs,
 	Matrix<float, 3, 4> camera_matrix,
 	PitchedPtr<NerfCoordinate> network_input,
+	const uint32_t stride_between_network_inputs,
 	const tcnn::network_precision_t* __restrict__ network_output,
+	const uint32_t stride_between_network_outputs,
 	uint32_t n_steps,
 	const BoundingBox* __restrict__ aabbs,
 	ENerfActivation rgb_activation, // needs to be per-nerf
@@ -1217,11 +1219,14 @@ __global__ void bl_composite_kernel_nerf(
 
 	uint32_t n_proxy_alive = 0;
 	Array4f proxy_rgba = Vector4f::Zero();
+	bool reached_max_transmittance = false;
 
 	for (uint32_t n = 0; n < n_nerfs; ++n) {
-		uint32_t nerf_offset_ray_idx = i + n * proxy_ray_stride_between_nerfs;
-		NerfProxyRay& proxy_ray = proxy_rays[nerf_offset_ray_idx];
-		if (proxy_ray.alive) {
+		uint32_t proxy_ray_offset_idx = i + n * proxy_ray_stride_between_nerfs;
+		NerfProxyRay& proxy_ray = proxy_rays[proxy_ray_offset_idx];
+		if (reached_max_transmittance) {
+			proxy_ray.alive = false;
+		} else if (proxy_ray.alive) {
 			++n_proxy_alive;
 
 			Vector3f cam_fwd = camera_matrix.col(2);
@@ -1230,13 +1235,17 @@ __global__ void bl_composite_kernel_nerf(
 			uint32_t actual_n_steps = proxy_ray.n_steps;
 			uint32_t j = 0;
 
+
+			uint32_t network_output_offset_idx = i + n * stride_between_network_outputs;
+			uint32_t network_input_offset_idx = i + n * proxy_ray_stride_between_nerfs;
+
 			for (; j < actual_n_steps; ++j) {
 				tcnn::vector_t<tcnn::network_precision_t, 4> proxy_network_output;
-				proxy_network_output[0] = network_output[nerf_offset_ray_idx + j * n_global_rays + 0 * network_components_stride];
-				proxy_network_output[1] = network_output[nerf_offset_ray_idx + j * n_global_rays + 1 * network_components_stride];
-				proxy_network_output[2] = network_output[nerf_offset_ray_idx + j * n_global_rays + 2 * network_components_stride];
-				proxy_network_output[3] = network_output[nerf_offset_ray_idx + j * n_global_rays + 3 * network_components_stride];
-				const NerfCoordinate* input = network_input(nerf_offset_ray_idx + j * n_global_rays);
+				proxy_network_output[0] = network_output[network_output_offset_idx + j * n_global_rays + 0 * network_components_stride];
+				proxy_network_output[1] = network_output[network_output_offset_idx + j * n_global_rays + 1 * network_components_stride];
+				proxy_network_output[2] = network_output[network_output_offset_idx + j * n_global_rays + 2 * network_components_stride];
+				proxy_network_output[3] = network_output[network_output_offset_idx + j * n_global_rays + 3 * network_components_stride];
+				const NerfCoordinate* input = network_input(proxy_ray_offset_idx + j * n_global_rays);
 				Vector3f warped_pos = input->pos.p;
 				Vector3f pos = unwarp_position(warped_pos, aabbs[n]);
 
@@ -1260,6 +1269,8 @@ __global__ void bl_composite_kernel_nerf(
 				proxy_rgba.w() += weight;
 
 				if (global_ray.rgba.w() + proxy_rgba.w() / n_proxy_alive > (1.0f - min_transmittance)) {
+					// kill other rays
+					reached_max_transmittance = true;
 					break;
 				}
 
@@ -1283,7 +1294,7 @@ __global__ void bl_composite_kernel_nerf(
 	Array4f final_rgba = global_ray.rgba + proxy_rgba;
 
 	if (final_rgba.w() > (1.0f - min_transmittance)) {
-		final_rgba /= proxy_rgba.w();
+		final_rgba /= final_rgba.w();
 	}
 
 	global_ray.rgba = final_rgba;
@@ -2955,7 +2966,9 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			render_data.workspace.get_stride_between_proxy_rays(),
 			render_data.camera.transform.block<3, 4>(0, 0),
 			nerf_network_input,
+			render_data.workspace.get_stride_between_network_inputs(),
 			(network_precision_t*)render_data.workspace.get_nerf_network_output(0),
+			render_data.workspace.get_stride_between_network_outputs(),
 			n_steps_between_compaction,
 			render_data.aabbs.data(),
 			nerfs[0].field.rgb_activation,
@@ -3241,7 +3254,7 @@ void Testbed::bl_render_nerf(
 	linear_kernel(bl_shade_kernel_nerf, 0, stream,
 		n_hit,
 		rays_hit,
-		true, //m_nerf.training.linear_colors,
+		false, //m_nerf.training.linear_colors,
 		render_buffer.frame_buffer(),
 		render_buffer.depth_buffer(),
 		m_render_data.output.ds,
