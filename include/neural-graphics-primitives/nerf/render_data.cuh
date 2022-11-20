@@ -21,8 +21,11 @@
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/nerf/nerf_render_proxy.cuh>
 #include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
+#include <neural-graphics-primitives/nerf/render_data_workspace.cuh>
 #include <neural-graphics-primitives/nerf/render_request.cuh>
 #include <neural-graphics-primitives/nerf/render_modifiers.cuh>
+
+#include <tiny-cuda-nn/common.h>
 
 NGP_NAMESPACE_BEGIN
 
@@ -37,14 +40,14 @@ public:
     RenderOutputProperties output;
     RenderCameraProperties camera;
     RenderModifiers modifiers;
-    BoundingBox aabb;
+	RenderDataWorkspace workspace;
+	tcnn::GPUMemory<BoundingBox> aabbs;
 
     RenderData() {};
 
     void update(const RenderRequest& request) {
         output = request.output;
         camera = request.camera;
-        aabb = request.aabb;
         update_modifiers(request.modifiers);
         update_nerfs(request.nerfs);
     }
@@ -100,11 +103,21 @@ public:
             nerf.load_snapshot();
             // nerf.inference.enlarge_workspace(...); ?
         }
+    }
+
+	void copy_from_host() {
+		modifiers.copy_from_host();
+
+		std::vector<BoundingBox> _aabbs;
 
 		for (NerfRenderProxy& proxy : _proxies) {
 			proxy.modifiers.copy_from_host();
+
+			_aabbs.emplace_back(proxy.aabb);
 		}
-    }
+
+		aabbs.resize_and_copy_from_host(_aabbs);
+	}
 
 	std::vector<NerfRenderProxy>& get_renderables() {
 		return _proxies;

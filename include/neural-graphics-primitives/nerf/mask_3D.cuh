@@ -140,14 +140,15 @@ struct Mask3D {
     EMaskMode mode;
     EMaskShape shape;
     Eigen::Matrix4f transform;
+	Eigen::Matrix4f itransform;
     ConfigArray config;
     float feather;
     float opacity;
 
     NGP_HOST_DEVICE Mask3D(const EMaskShape& shape, const Eigen::Matrix4f& transform, const EMaskMode& mode, const ConfigArray& config, const float& feather, const float& opacity)
-        : mode(mode), shape(shape), transform(transform), config(config), feather(feather), opacity(opacity) {};
+        : mode(mode), shape(shape), transform(transform), config(config), feather(feather), opacity(opacity), itransform(transform.inverse()) {};
     
-    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Eigen::Matrix4f::Identity()), config({0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}), feather(0.0f), opacity(0.0f) {};
+    NGP_HOST_DEVICE Mask3D() : mode(EMaskMode::Add), shape(EMaskShape::Box), transform(Eigen::Matrix4f::Identity()), config({0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}), feather(0.0f), opacity(0.0f), itransform(Eigen::Matrix4f::Identity()) {};
 
     NGP_HOST_DEVICE static Mask3D All(const EMaskMode& mode) {
         return Mask3D(EMaskShape::All, Eigen::Matrix4f::Identity(), mode, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0.0f, 1.0f);
@@ -165,28 +166,47 @@ struct Mask3D {
         return Mask3D(EMaskShape::Sphere, transform, mode, {radius, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, feather, opacity);
     };
 
+	inline NGP_HOST_DEVICE float signed_distance_to_point(const Eigen::Vector3f& p) const {
+		Eigen::Vector4f p_h = p.homogeneous();
+		Eigen::Vector4f p_t = itransform * p_h;
+		Eigen::Vector3f p_local = p_t.head<3>();
+
+		float d = 0.0f;
+		switch (shape) {
+			case EMaskShape::Box:
+				d = sdf_box(p_local, config.head<3>());
+				break;
+			case EMaskShape::Cylinder:
+				d = sdf_cylinder(p_local, config.coeff(0), config.coeff(1));
+				break;
+			case EMaskShape::Sphere:
+				d = sdf_sphere(p_local, config.coeff(0));
+				break;
+			case EMaskShape::All:
+				d = -1.0f;
+				break;
+		}
+
+		return d * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
+	}
+
+	inline NGP_HOST_DEVICE bool contains(const Eigen::Vector3f& p) const {
+		if (shape == EMaskShape::All) {
+			return mode == EMaskMode::Add;
+		}
+
+		float d = signed_distance_to_point(p);
+		return d < 0.5f * feather;
+	}
+
     inline NGP_HOST_DEVICE float sample(const Eigen::Vector3f& p) const {
 
-        Eigen::Matrix4f t_inv = transform.inverse();
-        Eigen::Vector4f p_h = p.homogeneous();
-        Eigen::Vector4f p_t = t_inv * p_h;
-        Eigen::Vector3f p_local = p_t.head<3>();
+		float k = (mode == EMaskMode::Add) ? 1.0f : -1.0f;
+		if (shape == EMaskShape::All) {
+			return k;
+		}
 
-        float d = 0.0f;
-        switch (shape) {
-            case EMaskShape::Box:
-                d = sdf_box(p_local, config.head<3>());
-                break;
-            case EMaskShape::Cylinder:
-                d = sdf_cylinder(p_local, config.coeff(0), config.coeff(1));
-                break;
-            case EMaskShape::Sphere:
-                d = sdf_sphere(p_local, config.coeff(0));
-                break;
-            case EMaskShape::All:
-                return (mode == EMaskMode::Add) ? 1.0f : -1.0f;
-                break;
-        }
+		float d = signed_distance_to_point(p);
 
         // TODO: Decompose transform to get accurate feathering
         // need sdf from feather bounds also
@@ -196,7 +216,7 @@ struct Mask3D {
         } else {
             alpha = tcnn::clamp(0.5f - d / feather, 0.0f, 1.0f);
         }
-        return opacity * alpha * ((mode == EMaskMode::Add) ? 1.0f : -1.0f);
+        return opacity * alpha * k;
     };
 
     inline NGP_HOST_DEVICE bool intersects_ray(const Ray& ray) const {
@@ -204,10 +224,13 @@ struct Mask3D {
         if (mode == EMaskMode::Subtract) {
             return true;
         }
+
+		if (shape == EMaskShape::All) {
+			return mode == EMaskMode::Add;
+		}
         
-        Eigen::Matrix4f t_inv4x4 = transform.inverse();
-        Eigen::Matrix3f t_inv3x3 = t_inv4x4.topLeftCorner<3, 3>();
-        Eigen::Vector3f ray_o_local = (t_inv4x4 * ray.o.homogeneous()).head<3>();
+        Eigen::Matrix3f t_inv3x3 = itransform.topLeftCorner<3, 3>();
+        Eigen::Vector3f ray_o_local = (itransform * ray.o.homogeneous()).head<3>();
         Eigen::Vector3f ray_d_local = t_inv3x3 * ray.d;
         Ray ray_local = {ray_o_local, ray_d_local.normalized()};
 
@@ -225,8 +248,10 @@ struct Mask3D {
                 const float radius = config.coeff(0);
                 return ray_intersects_sphere(ray_local, radius + 0.5f * feather);
             }
-            case EMaskShape::All:
-                return false;
+			default: {
+				// unknown mask
+				return true;
+			}
         }
     };
 };

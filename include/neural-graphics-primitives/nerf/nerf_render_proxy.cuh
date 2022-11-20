@@ -8,7 +8,6 @@
 #include <neural-graphics-primitives/bounding_box.cuh>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/nerf/nerf_descriptor.cuh>
-#include <neural-graphics-primitives/nerf/nerf_render_workspace.cuh>
 #include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
 #include <neural-graphics-primitives/nerf/render_modifiers.cuh>
 
@@ -21,7 +20,6 @@ struct NerfRenderProxy {
 	Eigen::Matrix4f transform;
 	RenderModifiers modifiers;
 	Eigen::Matrix4f render_aabb_to_local;
-	NerfRenderWorkspace workspace;
 
 	NerfRenderProxy(const NerfDescriptor& descriptor, NeuralRadianceField& nerf)
 		: field(nerf)
@@ -29,7 +27,6 @@ struct NerfRenderProxy {
 		, transform(descriptor.transform)
 		, modifiers(descriptor.modifiers)
 		, render_aabb_to_local(descriptor.transform.inverse())
-		, workspace()
 	{};
 };
 

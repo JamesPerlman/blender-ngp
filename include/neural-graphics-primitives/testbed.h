@@ -176,8 +176,7 @@ public:
 		void bl_init_rays_from_camera(
 			Eigen::Array4f* frame_buffer,
 			float* depth_buffer,
-			const RenderData& render_data,
-			NerfRenderProxy& nerf,
+			RenderData& render_data,
 			cudaStream_t stream
 		);
 

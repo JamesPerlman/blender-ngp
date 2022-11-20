@@ -40,7 +40,6 @@
 #include <neural-graphics-primitives/nerf_network.h>
 #include <neural-graphics-primitives/random_val.cuh>
 #include <neural-graphics-primitives/nerf/nerf_descriptor.cuh>
-#include <neural-graphics-primitives/nerf/render_modifiers.cuh>
 
 NGP_NAMESPACE_BEGIN
 

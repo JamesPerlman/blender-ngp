@@ -227,7 +227,7 @@ struct BoundingBox {
 
 	NGP_HOST_DEVICE Eigen::Vector3f localized_direction(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& d) const {
 		// TODO: can probably remove some of these normalized calls to optimize
-		return (aabb_to_local.topLeftCorner<3, 3>() * d.normalized()).normalized() * d.norm();
+		return (aabb_to_local.topLeftCorner<3, 3>() * d.normalized()).normalized();
 	}
 
 	NGP_HOST_DEVICE bool contains_localize(const Eigen::Matrix4f& aabb_to_local, const Eigen::Vector3f& p) const {
