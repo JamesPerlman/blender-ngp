@@ -856,7 +856,7 @@ __global__ void bl_generate_next_nerf_network_inputs(
 	const uint32_t n_elements,
 	const NerfGlobalRay* __restrict__ global_rays,
 	NerfProxyRay* proxy_rays,
-	PitchedPtr<NerfCoordinate> network_input,
+	NerfCoordinate* network_input,
 	const uint8_t* __restrict__ density_grid,
 	const uint32_t grid_size,
 	uint32_t n_steps,
@@ -948,12 +948,12 @@ __global__ void bl_generate_next_nerf_network_inputs(
 			t = advance_to_next_voxel(t, cone_angle_constant, pos, dir, idir, res);
 		}
 
-		network_input(i + j * n_elements)->set_with_optional_extra_dims(
+		network_input[i + j * n_elements].set_with_optional_extra_dims(
 			warp_position(pos, train_aabb),
 			warp_direction(dir),
 			warp_dt(dt),
 			nullptr,
-			network_input.stride_in_bytes
+			sizeof(NerfCoordinate)
 		); // XXXCONE
 		t += dt;
 	}
@@ -1197,7 +1197,7 @@ __global__ void bl_composite_kernel_nerf(
 	NerfProxyRay* __restrict__ proxy_rays,
 	const uint32_t proxy_ray_stride_between_nerfs,
 	Matrix<float, 3, 4> camera_matrix,
-	PitchedPtr<NerfCoordinate> network_input,
+	const NerfCoordinate* __restrict__ network_input,
 	const uint32_t stride_between_network_inputs,
 	const tcnn::network_precision_t* __restrict__ network_output,
 	const uint32_t stride_between_network_outputs,
@@ -1237,7 +1237,7 @@ __global__ void bl_composite_kernel_nerf(
 
 
 			uint32_t network_output_offset_idx = i + n * stride_between_network_outputs;
-			uint32_t network_input_offset_idx = i + n * proxy_ray_stride_between_nerfs;
+			uint32_t network_input_offset_idx = i + n * stride_between_network_inputs;
 
 			for (; j < actual_n_steps; ++j) {
 				tcnn::vector_t<tcnn::network_precision_t, 4> proxy_network_output;
@@ -1245,12 +1245,12 @@ __global__ void bl_composite_kernel_nerf(
 				proxy_network_output[1] = network_output[network_output_offset_idx + j * n_global_rays + 1 * network_components_stride];
 				proxy_network_output[2] = network_output[network_output_offset_idx + j * n_global_rays + 2 * network_components_stride];
 				proxy_network_output[3] = network_output[network_output_offset_idx + j * n_global_rays + 3 * network_components_stride];
-				const NerfCoordinate* input = network_input(proxy_ray_offset_idx + j * n_global_rays);
-				Vector3f warped_pos = input->pos.p;
+				const NerfCoordinate& input = network_input[network_input_offset_idx + j * n_global_rays];
+				Vector3f warped_pos = input.pos.p;
 				Vector3f pos = unwarp_position(warped_pos, aabbs[n]);
 
 				float T = 1.f - proxy_rgba.w();
-				float dt = unwarp_dt(input->dt);
+				float dt = unwarp_dt(input.dt);
 				float alpha = 1.f - __expf(-network_to_density(float(proxy_network_output[3]), density_activation) * dt);
 				float weight = alpha * T;
 
@@ -1268,7 +1268,7 @@ __global__ void bl_composite_kernel_nerf(
 				proxy_rgba.head<3>() += rgb * weight;
 				proxy_rgba.w() += weight;
 
-				if (global_ray.rgba.w() + proxy_rgba.w() / n_proxy_alive > (1.0f - min_transmittance)) {
+				if (global_ray.rgba.w() + proxy_rgba.w() / float(n_proxy_alive) > (1.0f - min_transmittance)) {
 					// kill other rays
 					reached_max_transmittance = true;
 					break;
@@ -1295,6 +1295,7 @@ __global__ void bl_composite_kernel_nerf(
 
 	if (final_rgba.w() > (1.0f - min_transmittance)) {
 		final_rgba /= final_rgba.w();
+		global_ray.alive = false;
 	}
 
 	global_ray.rgba = final_rgba;
@@ -2916,13 +2917,11 @@ uint32_t Testbed::NerfTracer::bl_trace(
 		for (uint32_t j = 0; j < nerfs.size(); ++j) {
 			NerfRenderProxy& nerf = nerfs[j];
 
-			PitchedPtr<NerfCoordinate> input_data((NerfCoordinate*)render_data.workspace.get_nerf_network_input(j), 1, 0, 0);
-
 			linear_kernel(bl_generate_next_nerf_network_inputs, 0, stream,
 				render_data.workspace.n_rays_alive,
 				global_rays_current,
 				render_data.workspace.get_proxy_rays(rays_current_index, j),
-				input_data,
+				render_data.workspace.get_nerf_network_input(j),
 				nerf.field.density_grid_bitfield.data(),
 				nerf.field.grid_size,
 				n_steps_between_compaction,
@@ -2953,9 +2952,6 @@ uint32_t Testbed::NerfTracer::bl_trace(
 
 		// composite network outputs as RGBA across all nerfs, accumulating colors in render_data.workspace.global_rays[...].rgba
 
-		// TODO: maybe this doesn't need to be a PitchedPtr anymore
-		PitchedPtr<NerfCoordinate> nerf_network_input((NerfCoordinate*)render_data.workspace.get_nerf_network_input(0), 1, 0, 0);
-
 		linear_kernel(bl_composite_kernel_nerf, 0, stream,
 			render_data.workspace.n_rays_alive,
 			nerfs.size(),
@@ -2965,7 +2961,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			render_data.workspace.get_proxy_rays_buffer(rays_current_index),
 			render_data.workspace.get_stride_between_proxy_rays(),
 			render_data.camera.transform.block<3, 4>(0, 0),
-			nerf_network_input,
+			render_data.workspace.get_nerf_network_input(0),
 			render_data.workspace.get_stride_between_network_inputs(),
 			(network_precision_t*)render_data.workspace.get_nerf_network_output(0),
 			render_data.workspace.get_stride_between_network_outputs(),

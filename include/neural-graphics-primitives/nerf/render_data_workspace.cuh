@@ -41,7 +41,7 @@ private:
 	uint32_t _stride_between_network_inputs;
 	uint32_t _stride_between_network_outputs;
 
-	float* network_input;
+	NerfCoordinate* network_input;
 	precision_t* network_output;
 
 	NerfProxyRay* proxy_rays[2];
@@ -76,7 +76,7 @@ public:
 		_stride_between_proxy_rays = _n_global_rays;
 		_n_proxy_rays = n_nerfs * _stride_between_proxy_rays;
 
-		_stride_between_network_inputs = _n_global_rays * max_steps_per_compaction * sizeof(NerfCoordinate) / 4;
+		_stride_between_network_inputs = _n_global_rays * max_steps_per_compaction;
 		_n_input_elements = n_nerfs * _stride_between_network_inputs;
 
 		_stride_between_network_outputs = _n_global_rays * max_steps_per_compaction * padded_output_width;
@@ -88,7 +88,7 @@ public:
 			NerfGlobalRay,
 			NerfProxyRay,
 			NerfProxyRay,
-			float,
+			NerfCoordinate,
 			precision_t
 		>(
 			stream, &scratch_alloc,
@@ -128,7 +128,7 @@ public:
 		return _stride_between_network_outputs;
 	}
 
-	float* get_nerf_network_input(uint32_t idx) const {
+	NerfCoordinate* get_nerf_network_input(uint32_t idx) const {
 		return &network_input[idx * _stride_between_network_inputs];
 	}
 
