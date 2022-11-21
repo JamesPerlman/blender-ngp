@@ -20,6 +20,7 @@
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/nerf/nerf_render_proxy.cuh>
+#include <neural-graphics-primitives/nerf/nerf_props_gpu.cuh>
 #include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
 #include <neural-graphics-primitives/nerf/render_data_workspace.cuh>
 #include <neural-graphics-primitives/nerf/render_request.cuh>
@@ -41,7 +42,7 @@ public:
     RenderCameraProperties camera;
     RenderModifiers modifiers;
 	RenderDataWorkspace workspace;
-	tcnn::GPUMemory<BoundingBox> aabbs;
+	NerfPropsGPU nerf_props;
 
     RenderData() {};
 
@@ -108,15 +109,7 @@ public:
 	void copy_from_host() {
 		modifiers.copy_from_host();
 
-		std::vector<BoundingBox> _aabbs;
-
-		for (NerfRenderProxy& proxy : _proxies) {
-			proxy.modifiers.copy_from_host();
-
-			_aabbs.emplace_back(proxy.aabb);
-		}
-
-		aabbs.resize_and_copy_from_host(_aabbs);
+		nerf_props.copy_from_host(_proxies);
 	}
 
 	std::vector<NerfRenderProxy>& get_renderables() {

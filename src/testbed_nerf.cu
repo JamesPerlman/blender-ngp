@@ -971,8 +971,9 @@ __global__ void bl_set_rays_active_kernel(
 	const uint32_t n_rays_alive,
 	const uint32_t n_nerfs,
 	NerfProxyRay* proxy_rays,
-	const uint32_t proxy_rays_stride_between_nerfs
-
+	const uint32_t proxy_rays_stride_between_nerfs,
+	const Matrix4f* __restrict__ nerf_transforms,
+	const Vector3f cam_pos
 ) {
 	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -980,8 +981,8 @@ __global__ void bl_set_rays_active_kernel(
 		return;
 	}
 
-	float lowest_t = 0.0f;
-	int32_t lowest_idx = -1;
+	float min_d2 = 0.0f;
+	int32_t active_idx = -1;
 
 
 	for (uint32_t n = 0; n < n_nerfs; ++n) {
@@ -991,17 +992,21 @@ __global__ void bl_set_rays_active_kernel(
 			continue;
 		}
 
-		if (proxy_ray.t < lowest_t || lowest_idx == -1) {
-			lowest_t = proxy_ray.t;
-			lowest_idx = proxy_ray_idx;
+		Vector3f p = proxy_ray.origin + proxy_ray.dir * proxy_ray.t;
+		p = (nerf_transforms[n] * p.homogeneous()).head<3>();
+		float d2 = (p - cam_pos).squaredNorm();
+
+		if (d2 < min_d2 || active_idx == -1) {
+			min_d2 = d2;
+			active_idx = proxy_ray_idx;
 		}
 
 		proxy_ray.active = false;
 	}
 
 	// turn back on the ray with the lowest t index
-	if (lowest_idx >= 0) {
-		proxy_rays[lowest_idx].active = true;
+	if (active_idx >= 0) {
+		proxy_rays[active_idx].active = true;
 	}
 }
 
@@ -3047,7 +3052,9 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			render_data.workspace.n_rays_alive,
 			n_nerfs,
 			proxy_rays_current,
-			render_data.workspace.get_proxy_rays_stride_between_nerfs()
+			render_data.workspace.get_proxy_rays_stride_between_nerfs(),
+			render_data.nerf_props.transforms.data(),
+			render_data.camera.transform.col(3)
 		);
 
 
@@ -3125,7 +3132,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			(network_precision_t*)render_data.workspace.get_nerf_network_output(0, 0),
 			render_data.workspace.get_network_output_stride_between_nerfs(),
 			n_steps_between_compaction,
-			render_data.aabbs.data(),
+			render_data.nerf_props.aabbs.data(),
 			nerfs[0].field.rgb_activation,
 			nerfs[0].field.density_activation,
 			nerfs[0].field.min_transmittance
