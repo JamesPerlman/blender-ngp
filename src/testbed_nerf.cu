@@ -40,6 +40,9 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
+#include <device_functions.h>
+#include <math_constants.h>
+
 #ifdef copysign
 #undef copysign
 #endif
@@ -882,10 +885,6 @@ __global__ void bl_generate_next_nerf_network_inputs(
 	}
 
 	NerfProxyRay& proxy_ray = proxy_rays[i];
-
-	if (!proxy_ray.alive) {
-		return;
-	}
 	
 	Vector3f origin = proxy_ray.origin;
 	Vector3f dir = proxy_ray.dir;
@@ -896,56 +895,62 @@ __global__ void bl_generate_next_nerf_network_inputs(
 	for (uint32_t j = 0; j < n_steps; ++j) {
 		Vector3f pos;
 		float dt = 0.0f;
-		while (1) {
-			// TODO: Distortion fields
+		// only step forward if the ray is active
+		if (proxy_ray.active) {
+			while (1) {
+				// TODO: Distortion fields
+				pos = origin + dir * t;
+				if (!render_aabb.contains(pos)) {
+					proxy_ray.n_steps = j;
+					return;
+				}
+
+				dt = calc_dt(t, cone_angle_constant);
+				uint32_t mip = max(0, mip_from_dt(dt, pos));
+
+				if (!density_grid) {
+					break;
+				}
+
+				// test density grid first, then test masks
+				if (density_grid_occupied_at(pos, density_grid, mip)) {
+					bool hits_any_mask = n_global_masks == 0 && n_local_masks == 0;
+
+					if (hits_any_mask) {
+						break;
+					}
+
+					// test global masks
+					for (uint32_t k = 0; k < n_global_masks; ++k) {
+						if (global_masks[k].contains(pos)) {
+							hits_any_mask = true;
+							break;
+						}
+					}
+
+					if (hits_any_mask) {
+						break;
+					}
+
+					// test local masks
+					for (uint32_t k = 0; k < n_local_masks; ++k) {
+						if (local_masks[k].contains(pos)) {
+							hits_any_mask = true;
+							break;
+						}
+					}
+
+					if (hits_any_mask) {
+						break;
+					}
+				}
+
+				uint32_t res = grid_size >> mip;
+				t = advance_to_next_voxel(t, cone_angle_constant, pos, dir, idir, res);
+			}
+		} else {
 			pos = origin + dir * t;
-			if (!render_aabb.contains(pos)) {
-				proxy_ray.n_steps = j;
-				return;
-			}
-
 			dt = calc_dt(t, cone_angle_constant);
-			uint32_t mip = max(0, mip_from_dt(dt, pos));
-
-			if (!density_grid) {
-				break;
-			}
-
-			// test density grid first, then test masks
-			if (density_grid_occupied_at(pos, density_grid, mip)) {
-				bool hits_any_mask = n_global_masks == 0 && n_local_masks == 0;
-
-				if (hits_any_mask) {
-					break;
-				}
-
-				// test global masks
-				for (uint32_t k = 0; k < n_global_masks; ++k) {
-					if (global_masks[k].contains(pos)) {
-						hits_any_mask = true;
-						break;
-					}
-				}
-
-				if (hits_any_mask) {
-					break;
-				}
-
-				// test local masks
-				for (uint32_t k = 0; k < n_local_masks; ++k) {
-					if (local_masks[k].contains(pos)) {
-						hits_any_mask = true;
-						break;
-					}
-				}
-
-				if (hits_any_mask) {
-					break;
-				}
-			}
-
-			uint32_t res = grid_size>>mip;
-			t = advance_to_next_voxel(t, cone_angle_constant, pos, dir, idir, res);
 		}
 
 		network_input[i + j * n_elements].set_with_optional_extra_dims(
@@ -960,6 +965,103 @@ __global__ void bl_generate_next_nerf_network_inputs(
 
 	proxy_ray.t = t;
 	proxy_ray.n_steps = n_steps;
+}
+
+__global__ void bl_set_rays_active_kernel(
+	const uint32_t n_rays_alive,
+	const uint32_t n_nerfs,
+	NerfProxyRay* proxy_rays,
+	const uint32_t proxy_rays_stride_between_nerfs
+
+) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+
+	if (i >= n_rays_alive) {
+		return;
+	}
+
+	float lowest_t = 0.0f;
+	int32_t lowest_idx = -1;
+
+
+	for (uint32_t n = 0; n < n_nerfs; ++n) {
+		const uint32_t proxy_ray_idx = i + n * proxy_rays_stride_between_nerfs;
+		NerfProxyRay& proxy_ray = proxy_rays[proxy_ray_idx];
+		if (!proxy_ray.alive) {
+			continue;
+		}
+
+		if (proxy_ray.t < lowest_t || lowest_idx == -1) {
+			lowest_t = proxy_ray.t;
+			lowest_idx = proxy_ray_idx;
+		}
+
+		proxy_ray.active = false;
+	}
+
+	// turn back on the ray with the lowest t index
+	if (lowest_idx >= 0) {
+		proxy_rays[lowest_idx].active = true;
+	}
+}
+
+// compact network inputs for rays that are ready to sample
+__global__ void bl_compact_nerf_network_input_kernel(
+	const uint32_t n_rays_alive,
+	const NerfProxyRay* __restrict__ proxy_rays,
+	const NerfCoordinate* __restrict__ network_input_src,
+	NerfCoordinate* network_input_dst,
+	uint32_t* network_ray_indices,
+	uint32_t* n_compacted_network_elements
+) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+
+	if (i >= n_rays_alive) {
+		return;
+	}
+
+	const NerfProxyRay& proxy_ray = proxy_rays[i];
+
+	if (!proxy_ray.alive || !proxy_ray.active) {
+		return;
+	}
+
+	const uint32_t idx = atomicAdd(n_compacted_network_elements, 1);
+	network_input_dst[idx] = network_input_src[i];
+	network_ray_indices[idx] = i;
+}
+
+// re-expand network inputs and outputs after sampling
+__global__ void bl_expand_nerf_network_elements(
+	const uint32_t n_compacted_network_elements,
+	const uint32_t n_rays_alive,
+	const uint32_t n_steps,
+	const uint32_t compacted_components_stride,
+	const uint32_t expanded_components_stride,
+	const uint32_t* __restrict__ network_ray_indices,
+	const NerfCoordinate* __restrict__ network_input_src,
+	NerfCoordinate* network_input_dst,
+	const network_precision_t* __restrict__ network_output_src,
+	network_precision_t* network_output_dst
+) {
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+
+	if (i >= n_compacted_network_elements) {
+		return;
+	}
+	const uint32_t& idx = network_ray_indices[i];
+
+	for (uint32_t j = 0; j < n_steps; ++j) {
+		uint32_t offset_src = i + j * n_compacted_network_elements;
+		uint32_t offset_dst = idx + j * n_rays_alive;
+
+		network_output_dst[offset_dst + 0 * expanded_components_stride] = network_output_src[offset_src + 0 * compacted_components_stride];
+		network_output_dst[offset_dst + 1 * expanded_components_stride] = network_output_src[offset_src + 1 * compacted_components_stride];
+		network_output_dst[offset_dst + 2 * expanded_components_stride] = network_output_src[offset_src + 2 * compacted_components_stride];
+		network_output_dst[offset_dst + 3 * expanded_components_stride] = network_output_src[offset_src + 3 * compacted_components_stride];
+
+		network_input_dst[offset_dst] = network_input_src[offset_src];
+	}
 }
 
 __global__ void composite_kernel_nerf(
@@ -997,7 +1099,6 @@ __global__ void composite_kernel_nerf(
 	float x = (float)threadIdx.x / (float)blockDim.x;
 	float y = (float)blockIdx.x / (float)blockDim.y;
 	rgba[i] = Vector4f(x, 0.0f, y, 1.0f);
-	payload.alive = false;
 
 	if (!payload.alive) {
 		return;
@@ -1192,15 +1293,15 @@ __global__ void bl_composite_kernel_nerf(
 	const uint32_t n_global_rays,
 	const uint32_t n_nerfs,
 	const uint32_t current_step,
-	NerfGlobalRay* __restrict__ global_rays,
+	NerfGlobalRay* global_rays,
 	const uint32_t network_components_stride,
-	NerfProxyRay* __restrict__ proxy_rays,
+	NerfProxyRay* proxy_rays,
 	const uint32_t proxy_ray_stride_between_nerfs,
 	Matrix<float, 3, 4> camera_matrix,
 	const NerfCoordinate* __restrict__ network_input,
-	const uint32_t stride_between_network_inputs,
+	const uint32_t network_input_stride_between_nerfs,
 	const tcnn::network_precision_t* __restrict__ network_output,
-	const uint32_t stride_between_network_outputs,
+	const uint32_t network_output_stride_between_nerfs,
 	uint32_t n_steps,
 	const BoundingBox* __restrict__ aabbs,
 	ENerfActivation rgb_activation, // needs to be per-nerf
@@ -1218,70 +1319,76 @@ __global__ void bl_composite_kernel_nerf(
 	}
 
 	uint32_t n_proxy_alive = 0;
-	Array4f proxy_rgba = Vector4f::Zero();
-	bool reached_max_transmittance = false;
+
+	Array4f local_rgba = global_ray.rgba;
 
 	for (uint32_t n = 0; n < n_nerfs; ++n) {
 		uint32_t proxy_ray_offset_idx = i + n * proxy_ray_stride_between_nerfs;
 		NerfProxyRay& proxy_ray = proxy_rays[proxy_ray_offset_idx];
-		if (reached_max_transmittance) {
-			proxy_ray.alive = false;
-		} else if (proxy_ray.alive) {
-			++n_proxy_alive;
 
-			Vector3f cam_fwd = camera_matrix.col(2);
-
-			// Composite in the last n steps
-			uint32_t actual_n_steps = proxy_ray.n_steps;
-			uint32_t j = 0;
-
-
-			uint32_t network_output_offset_idx = i + n * stride_between_network_outputs;
-			uint32_t network_input_offset_idx = i + n * stride_between_network_inputs;
-
-			for (; j < actual_n_steps; ++j) {
-				tcnn::vector_t<tcnn::network_precision_t, 4> proxy_network_output;
-				proxy_network_output[0] = network_output[network_output_offset_idx + j * n_global_rays + 0 * network_components_stride];
-				proxy_network_output[1] = network_output[network_output_offset_idx + j * n_global_rays + 1 * network_components_stride];
-				proxy_network_output[2] = network_output[network_output_offset_idx + j * n_global_rays + 2 * network_components_stride];
-				proxy_network_output[3] = network_output[network_output_offset_idx + j * n_global_rays + 3 * network_components_stride];
-				const NerfCoordinate& input = network_input[network_input_offset_idx + j * n_global_rays];
-				Vector3f warped_pos = input.pos.p;
-				Vector3f pos = unwarp_position(warped_pos, aabbs[n]);
-
-				float T = 1.f - proxy_rgba.w();
-				float dt = unwarp_dt(input.dt);
-				float alpha = 1.f - __expf(-network_to_density(float(proxy_network_output[3]), density_activation) * dt);
-				float weight = alpha * T;
-
-				Array3f rgb = network_to_rgb(proxy_network_output, rgb_activation);
-
-				// TODO: masks
-				// float mask_weight = 1.f;
-
-				// for (uint32_t k = 0; k < n_render_masks; ++k) {
-				//	float mask_alpha = render_masks[k].sample(pos);
-				//	mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
-				// }
-				// weight *= mask_weight;
-
-				proxy_rgba.head<3>() += rgb * weight;
-				proxy_rgba.w() += weight;
-
-				if (global_ray.rgba.w() + proxy_rgba.w() / float(n_proxy_alive) > (1.0f - min_transmittance)) {
-					// kill other rays
-					reached_max_transmittance = true;
-					break;
-				}
-
-			}
-
-			// we broke out of the step loop early, ray must have terminated
-			if (j < n_steps) {
-				proxy_ray.alive = false;
-				proxy_ray.n_steps = j + current_step;
-			}
+		if (!proxy_ray.alive) {
+			continue;
 		}
+		++n_proxy_alive;
+
+		if (!proxy_ray.active) {
+			continue;
+		}
+
+		Vector3f cam_fwd = camera_matrix.col(2);
+
+		// Composite in the last n steps
+		uint32_t actual_n_steps = proxy_ray.n_steps;
+		uint32_t j = 0;
+
+
+		uint32_t network_output_idx = i + n * network_output_stride_between_nerfs;
+		uint32_t network_input_idx = i + n * network_input_stride_between_nerfs;
+
+		for (; j < actual_n_steps; ++j) {
+			tcnn::vector_t<tcnn::network_precision_t, 4> proxy_network_output;
+			proxy_network_output[0] = network_output[network_output_idx + j * n_global_rays + 0 * network_components_stride];
+			proxy_network_output[1] = network_output[network_output_idx + j * n_global_rays + 1 * network_components_stride];
+			proxy_network_output[2] = network_output[network_output_idx + j * n_global_rays + 2 * network_components_stride];
+			proxy_network_output[3] = network_output[network_output_idx + j * n_global_rays + 3 * network_components_stride];
+			const NerfCoordinate& input = network_input[network_input_idx + j * n_global_rays];
+			Vector3f warped_pos = input.pos.p;
+			Vector3f pos = unwarp_position(warped_pos, aabbs[n]);
+
+			float T = 1.f - local_rgba.w();
+			float dt = unwarp_dt(input.dt);
+			float alpha = 1.f - __expf(-network_to_density(float(proxy_network_output[3]), density_activation) * dt);
+			float weight = alpha * T;
+
+			Array3f rgb = network_to_rgb(proxy_network_output, rgb_activation);
+
+			// TODO: masks
+			// float mask_weight = 1.f;
+
+			// for (uint32_t k = 0; k < n_render_masks; ++k) {
+			//	float mask_alpha = render_masks[k].sample(pos);
+			//	mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
+			// }
+			// weight *= mask_weight;
+
+			local_rgba.head<3>() += rgb * weight;
+			local_rgba.w() += weight;
+
+			if (local_rgba.w() > (1.0f - min_transmittance)) {
+				local_rgba /= local_rgba.w();
+				break;
+			}
+
+		}
+
+		// we broke out of the step loop early, ray must have terminated
+		if (j < n_steps) {
+			proxy_ray.alive = false;
+			proxy_ray.n_steps = j + current_step;
+		}
+
+		// there can only be one ray active at any time, so the loop is over
+		break;
 	}
 
 	if (n_proxy_alive == 0) {
@@ -1289,16 +1396,7 @@ __global__ void bl_composite_kernel_nerf(
 		return;
 	}
 
-	proxy_rgba /= float(n_proxy_alive);
-
-	Array4f final_rgba = global_ray.rgba + proxy_rgba;
-
-	if (final_rgba.w() > (1.0f - min_transmittance)) {
-		final_rgba /= final_rgba.w();
-		global_ray.alive = false;
-	}
-
-	global_ray.rgba = final_rgba;
+	global_ray.rgba = local_rgba;
 	// global_ray.depth = global_depth;
 }
 
@@ -2171,7 +2269,7 @@ __global__ void bl_compact_rays_kernel_nerf(
 	NerfProxyRay* proxy_src_rays,
 	NerfProxyRay* proxy_dst_rays,
 	uint32_t n_nerfs,
-	uint32_t stride_between_proxy_rays,
+	uint32_t proxy_rays_stride_between_nerfs,
 	NerfGlobalRay* global_final_rays,
 	uint32_t* global_alive_counter,
 	uint32_t* global_final_counter
@@ -2186,7 +2284,7 @@ __global__ void bl_compact_rays_kernel_nerf(
 		uint32_t idx = atomicAdd(global_alive_counter, 1);
 		global_dst_rays[idx] = global_src_ray;
 		for (uint32_t n = 0; n < n_nerfs; ++n) {
-			uint32_t offset = n * stride_between_proxy_rays;
+			uint32_t offset = n * proxy_rays_stride_between_nerfs;
 			proxy_dst_rays[idx + offset] = proxy_src_rays[i + offset];
 		}
 	} else if (global_src_ray.rgba.w() > 0.001f) {
@@ -2506,7 +2604,7 @@ __global__ void bl_init_proxy_rays_kernel_nerf(
 			}
 		}
 	}
-
+	proxy_ray.active = true;
 	proxy_ray.alive = ray_intersects_any_mask;
 	proxy_ray.idx = global_ray.idx;
 	proxy_ray.t = t;
@@ -2871,10 +2969,17 @@ uint32_t Testbed::NerfTracer::bl_trace(
 
 	CUDA_CHECK_THROW(cudaMemsetAsync(render_data.workspace.hit_counter.data(), 0, sizeof(uint32_t), stream));
 
+	std::vector<NerfRenderProxy>& nerfs = render_data.get_renderables();
+	uint32_t n_nerfs = nerfs.size();
+
 	uint32_t i = 1;
 	uint32_t double_buffer_index = 0;
+
+	// we will be reusing this
+	std::vector<uint32_t> n_compacted_network_elements;
+	n_compacted_network_elements.resize(n_nerfs);
+
 	while (i < MARCH_ITER) {
-		std::vector<NerfRenderProxy>& nerfs = render_data.get_renderables();
 
 		uint32_t rays_tmp_index = double_buffer_index % 2;
 		uint32_t rays_current_index = (double_buffer_index + 1) % 2;
@@ -2897,7 +3002,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 				proxy_rays_tmp,
 				proxy_rays_current,
 				(uint32_t)nerfs.size(),
-				render_data.workspace.get_stride_between_proxy_rays(),
+				render_data.workspace.get_proxy_rays_stride_between_nerfs(),
 				render_data.workspace.global_rays_hit,
 				render_data.workspace.alive_counter.data(),
 				render_data.workspace.hit_counter.data()
@@ -2914,14 +3019,14 @@ uint32_t Testbed::NerfTracer::bl_trace(
 
 		uint32_t n_network_elements = next_multiple(render_data.workspace.n_rays_alive * n_steps_between_compaction, tcnn::batch_size_granularity);
 
-		for (uint32_t j = 0; j < nerfs.size(); ++j) {
+		for (uint32_t j = 0; j < n_nerfs; ++j) {
 			NerfRenderProxy& nerf = nerfs[j];
 
 			linear_kernel(bl_generate_next_nerf_network_inputs, 0, stream,
 				render_data.workspace.n_rays_alive,
 				global_rays_current,
 				render_data.workspace.get_proxy_rays(rays_current_index, j),
-				render_data.workspace.get_nerf_network_input(j),
+				render_data.workspace.get_nerf_network_input(0, j),
 				nerf.field.density_grid_bitfield.data(),
 				nerf.field.grid_size,
 				n_steps_between_compaction,
@@ -2934,20 +3039,74 @@ uint32_t Testbed::NerfTracer::bl_trace(
 				nerf.modifiers.masks.data(),
 				nerf.modifiers.masks.size()
 			);
+		}
+
+
+		// at this point we filter all rays across all nerfs and select only the alive ones with the lowest t-value to pass into the network
+		linear_kernel(bl_set_rays_active_kernel, 0, stream,
+			render_data.workspace.n_rays_alive,
+			n_nerfs,
+			proxy_rays_current,
+			render_data.workspace.get_proxy_rays_stride_between_nerfs()
+		);
+
+
+		CUDA_CHECK_THROW(cudaMemsetAsync(render_data.workspace.network_element_counters.data(), 0, n_nerfs * sizeof(uint32_t), stream));
+		for (uint32_t j = 0; j < n_nerfs; ++j) {
+			NerfRenderProxy& nerf = nerfs[j];
+
+			// now, for each nerf, we compact the network inputs to use only the rays that are ready to sample
+
+			linear_kernel(bl_compact_nerf_network_input_kernel, 0, stream,
+				render_data.workspace.n_rays_alive,
+				render_data.workspace.get_proxy_rays(rays_current_index, j),
+				render_data.workspace.get_nerf_network_input(0, j),
+				render_data.workspace.get_nerf_network_input(1, j),
+				render_data.workspace.get_network_ray_indices(j),
+				render_data.workspace.network_element_counters.data() + j
+			);
+		}
+
+		// fetch all the compacted network element counters values
+		CUDA_CHECK_THROW(cudaMemcpyAsync(n_compacted_network_elements.data(), render_data.workspace.network_element_counters.data(), n_nerfs * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream));
+		// do we need to sync here?
+		CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+
+
+		for (uint32_t j = 0; j < n_nerfs; ++j) {
+			NerfRenderProxy& nerf = nerfs[j];
+
+			// now we sample each nerf's networks using the compacted elements
+			const uint32_t n_compacted_elements = next_multiple(n_compacted_network_elements.at(j), tcnn::batch_size_granularity); ;
 
 			GPUMatrix<float> positions_matrix(
-				(float*)render_data.workspace.get_nerf_network_input(j),
+				(float*)render_data.workspace.get_nerf_network_input(1, j),
 				sizeof(NerfCoordinate) / sizeof(float),
-				n_network_elements
+				n_compacted_elements
 			);
 
 			GPUMatrix<network_precision_t, RM> rgbsigma_matrix(
-				(network_precision_t*)render_data.workspace.get_nerf_network_output(j),
+				(network_precision_t*)render_data.workspace.get_nerf_network_output(1, j),
 				nerf.field.network->padded_output_width(),
-				n_network_elements
+				n_compacted_elements
 			);
 
 			nerf.field.network->inference_mixed_precision(stream, positions_matrix, rgbsigma_matrix);
+
+			// then we expand the elements back to their original shape so the indexing matches up with this batch of rays
+
+			linear_kernel(bl_expand_nerf_network_elements, 0, stream,
+				n_compacted_network_elements.at(j),
+				render_data.workspace.n_rays_alive,
+				n_steps_between_compaction,
+				n_compacted_elements,
+				n_network_elements,
+				render_data.workspace.get_network_ray_indices(j),
+				render_data.workspace.get_nerf_network_input(1, j),
+				render_data.workspace.get_nerf_network_input(0, j),
+				render_data.workspace.get_nerf_network_output(1, j),
+				render_data.workspace.get_nerf_network_output(0, j)
+			);
 		}
 
 		// composite network outputs as RGBA across all nerfs, accumulating colors in render_data.workspace.global_rays[...].rgba
@@ -2958,13 +3117,13 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			i,
 			global_rays_current,
 			n_network_elements,
-			render_data.workspace.get_proxy_rays_buffer(rays_current_index),
-			render_data.workspace.get_stride_between_proxy_rays(),
+			proxy_rays_current,
+			render_data.workspace.get_proxy_rays_stride_between_nerfs(),
 			render_data.camera.transform.block<3, 4>(0, 0),
-			render_data.workspace.get_nerf_network_input(0),
-			render_data.workspace.get_stride_between_network_inputs(),
-			(network_precision_t*)render_data.workspace.get_nerf_network_output(0),
-			render_data.workspace.get_stride_between_network_outputs(),
+			render_data.workspace.get_nerf_network_input(0, 0),
+			render_data.workspace.get_network_input_stride_between_nerfs(),
+			(network_precision_t*)render_data.workspace.get_nerf_network_output(0, 0),
+			render_data.workspace.get_network_output_stride_between_nerfs(),
 			n_steps_between_compaction,
 			render_data.aabbs.data(),
 			nerfs[0].field.rgb_activation,
