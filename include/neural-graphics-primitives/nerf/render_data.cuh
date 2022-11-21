@@ -84,17 +84,17 @@ public:
 		_proxies.clear();
 
 
-		for (NeuralRadianceField& nerf : _nerfs) {
-			auto desc = std::find_if(descriptors.begin(), descriptors.end(), [&](const NerfDescriptor& descriptor) {
-				return descriptor.snapshot_path == nerf.snapshot_path;
+		for (const NerfDescriptor& desc : descriptors) {
+			auto nerf = std::find_if(_nerfs.begin(), _nerfs.end(), [&](const NeuralRadianceField& nerf) {
+				return nerf.snapshot_path == desc.snapshot_path;
 			});
 
-			if (desc == descriptors.end()) {
-				printf("Somehow a descriptor was not found for this nerf.  Something is very, very wrong.\n");
+			if (nerf == _nerfs.end()) {
+				printf("Somehow a nerf was not found for this descriptor.  Something is very, very wrong.\n");
 				continue;
 			}
 
-			_proxies.emplace_back(*desc, nerf);
+			_proxies.emplace_back(desc, *nerf);
 		}
 
     }
