@@ -947,13 +947,13 @@ __global__ void bl_generate_next_nerf_network_inputs(
 
 				uint32_t res = grid_size >> mip;
 				t = advance_to_next_voxel(t, cone_angle_constant, pos, dir, idir, res);
-			}
+			} // while
+
 			t += dt;
 		} else {
 			pos = origin + dir * t;
 			dt = calc_dt(t, cone_angle_constant);
 		}
-
 		network_input[i + j * n_elements].set_with_optional_extra_dims(
 			warp_position(pos, train_aabb),
 			warp_direction(dir),
@@ -961,7 +961,7 @@ __global__ void bl_generate_next_nerf_network_inputs(
 			nullptr,
 			sizeof(NerfCoordinate)
 		); // XXXCONE
-	}
+	} // for
 
 	proxy_ray.t = t;
 	proxy_ray.n_steps = n_steps;
@@ -2575,13 +2575,13 @@ __global__ void bl_init_proxy_rays_kernel_nerf(
 		return;
 	}
 
-	proxy_ray.origin = render_aabb.localized_point(render_aabb_to_local, global_ray.origin);
+	Vector3f origin = render_aabb.localized_point(render_aabb_to_local, global_ray.origin);
 	proxy_ray.dir = render_aabb.localized_direction(render_aabb_to_local, global_ray.dir);
 
 	// TODO: scene transform
-	float t = fmaxf(render_aabb.ray_intersect(proxy_ray.origin, proxy_ray.dir).x(), 0.0f) + 1e-6f;
+	float t = fmaxf(render_aabb.ray_intersect(origin, proxy_ray.dir).x(), 0.0f) + 1e-6f;
 
-	if (!render_aabb.contains(proxy_ray.origin + proxy_ray.dir * t)) {
+	if (!render_aabb.contains(origin + proxy_ray.dir * t)) {
 		proxy_ray.alive = false;
 		return;
 	}
@@ -2590,7 +2590,7 @@ __global__ void bl_init_proxy_rays_kernel_nerf(
 
 	// test global masks
 	if (!ray_intersects_any_mask) {
-		const Ray global_r = { global_ray.origin, global_ray.dir };
+		const Ray global_r = { origin, global_ray.dir };
 		for (uint32_t k = 0; k < n_global_masks; ++k) {
 			if (global_masks[k].intersects_ray(global_r)) {
 				ray_intersects_any_mask = true;
@@ -2601,7 +2601,7 @@ __global__ void bl_init_proxy_rays_kernel_nerf(
 
 	// test local masks
 	if (!ray_intersects_any_mask) {
-		const Ray local_r = { proxy_ray.origin, proxy_ray.dir };
+		const Ray local_r = { origin, proxy_ray.dir };
 		for (uint32_t k = 0; k < n_local_masks; ++k) {
 			if (local_masks[k].intersects_ray(local_r)) {
 				ray_intersects_any_mask = true;
@@ -2612,8 +2612,9 @@ __global__ void bl_init_proxy_rays_kernel_nerf(
 	proxy_ray.active = true;
 	proxy_ray.alive = ray_intersects_any_mask;
 	proxy_ray.idx = global_ray.idx;
-	proxy_ray.t = t;
+	proxy_ray.t = 0.0f;
 	proxy_ray.n_steps = 0;
+	proxy_ray.origin = origin + t * proxy_ray.dir;
 }
 
 static constexpr float MIN_PDF = 0.01f;
@@ -3057,7 +3058,6 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			render_data.camera.transform.col(3)
 		);
 
-
 		CUDA_CHECK_THROW(cudaMemsetAsync(render_data.workspace.network_element_counters.data(), 0, n_nerfs * sizeof(uint32_t), stream));
 		for (uint32_t j = 0; j < n_nerfs; ++j) {
 			NerfRenderProxy& nerf = nerfs[j];
@@ -3117,7 +3117,6 @@ uint32_t Testbed::NerfTracer::bl_trace(
 		}
 
 		// composite network outputs as RGBA across all nerfs, accumulating colors in render_data.workspace.global_rays[...].rgba
-
 		linear_kernel(bl_composite_kernel_nerf, 0, stream,
 			render_data.workspace.n_rays_alive,
 			nerfs.size(),
