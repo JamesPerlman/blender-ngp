@@ -948,6 +948,7 @@ __global__ void bl_generate_next_nerf_network_inputs(
 				uint32_t res = grid_size >> mip;
 				t = advance_to_next_voxel(t, cone_angle_constant, pos, dir, idir, res);
 			}
+			t += dt;
 		} else {
 			pos = origin + dir * t;
 			dt = calc_dt(t, cone_angle_constant);
@@ -960,7 +961,6 @@ __global__ void bl_generate_next_nerf_network_inputs(
 			nullptr,
 			sizeof(NerfCoordinate)
 		); // XXXCONE
-		t += dt;
 	}
 
 	proxy_ray.t = t;
