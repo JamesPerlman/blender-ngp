@@ -891,10 +891,11 @@ __global__ void bl_generate_next_nerf_network_inputs(
 	Vector3f idir = dir.cwiseInverse();
 
 	float t = proxy_ray.t;
+	float dt = 0.0f;
 
 	for (uint32_t j = 0; j < n_steps; ++j) {
 		Vector3f pos;
-		float dt = 0.0f;
+		dt = 0.0f;
 		// only step forward if the ray is active
 		if (proxy_ray.active) {
 			while (1) {
@@ -964,6 +965,7 @@ __global__ void bl_generate_next_nerf_network_inputs(
 	} // for
 
 	proxy_ray.t = t;
+	proxy_ray.dt = dt;
 	proxy_ray.n_steps = n_steps;
 }
 
@@ -1244,8 +1246,6 @@ __global__ void bl_composite_kernel_nerf(
 	NerfProxyRay* proxy_rays,
 	const uint32_t proxy_ray_stride_between_nerfs,
 	Matrix<float, 3, 4> camera_matrix,
-	const NerfCoordinate* __restrict__ network_input,
-	const uint32_t network_input_stride_between_nerfs,
 	const tcnn::network_precision_t* __restrict__ network_output,
 	const uint32_t network_output_stride_between_nerfs,
 	uint32_t n_steps,
@@ -1289,7 +1289,6 @@ __global__ void bl_composite_kernel_nerf(
 
 
 		uint32_t network_output_idx = i + n * network_output_stride_between_nerfs;
-		uint32_t network_input_idx = i + n * network_input_stride_between_nerfs;
 
 		for (; j < actual_n_steps; ++j) {
 			tcnn::vector_t<tcnn::network_precision_t, 4> proxy_network_output;
@@ -1297,12 +1296,11 @@ __global__ void bl_composite_kernel_nerf(
 			proxy_network_output[1] = network_output[network_output_idx + j * n_global_rays + 1 * network_components_stride];
 			proxy_network_output[2] = network_output[network_output_idx + j * n_global_rays + 2 * network_components_stride];
 			proxy_network_output[3] = network_output[network_output_idx + j * n_global_rays + 3 * network_components_stride];
-			const NerfCoordinate& input = network_input[network_input_idx + j * n_global_rays];
-			Vector3f warped_pos = input.pos.p;
-			Vector3f pos = unwarp_position(warped_pos, aabbs[n]);
+
+			Vector3f pos = proxy_ray.origin + proxy_ray.dir * proxy_ray.t;
 
 			float T = 1.f - local_rgba.w();
-			float dt = unwarp_dt(input.dt);
+			float dt = proxy_ray.dt;
 			float alpha = 1.f - __expf(-network_to_density(float(proxy_network_output[3]), density_activation) * dt);
 			float weight = alpha * T;
 
@@ -2973,7 +2971,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 				render_data.workspace.n_rays_alive,
 				global_rays_current,
 				render_data.workspace.get_proxy_rays(rays_current_index, j),
-				render_data.workspace.get_nerf_network_input(j),
+				render_data.workspace.get_nerf_network_input(),
 				nerf.field.density_grid_bitfield.data(),
 				nerf.field.grid_size,
 				n_steps_between_compaction,
@@ -2988,7 +2986,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			);
 
 			GPUMatrix<float> positions_matrix(
-				(float*)render_data.workspace.get_nerf_network_input(j),
+				(float*)render_data.workspace.get_nerf_network_input(),
 				sizeof(NerfCoordinate) / sizeof(float),
 				n_network_elements
 			);
@@ -3022,8 +3020,6 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			proxy_rays_current,
 			render_data.workspace.get_proxy_rays_stride_between_nerfs(),
 			render_data.camera.transform.block<3, 4>(0, 0),
-			render_data.workspace.get_nerf_network_input(0),
-			render_data.workspace.get_network_input_stride_between_nerfs(),
 			(network_precision_t*)render_data.workspace.get_nerf_network_output(0),
 			render_data.workspace.get_network_output_stride_between_nerfs(),
 			n_steps_between_compaction,

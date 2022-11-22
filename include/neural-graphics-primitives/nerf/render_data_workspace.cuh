@@ -23,6 +23,7 @@ struct NerfProxyRay {
 	Eigen::Vector3f origin;
 	Eigen::Vector3f dir;
 	float t;
+	float dt;
 	uint32_t idx;
 	uint16_t n_steps;
 	bool alive;
@@ -82,7 +83,7 @@ public:
 		_n_network_values = _n_global_rays * max_steps_per_compaction;
 
 		_network_input_stride_between_nerfs = _n_network_values;
-		_n_input_elements = n_nerfs * _network_input_stride_between_nerfs;
+		_n_input_elements = _n_network_values;
 
 		_network_output_stride_between_nerfs = _n_network_values * padded_output_width;
 		_n_output_elements = n_nerfs * _network_output_stride_between_nerfs;
@@ -133,8 +134,8 @@ public:
 		return _network_output_stride_between_nerfs;
 	}
 
-	NerfCoordinate* get_nerf_network_input(uint32_t nerf_idx) const {
-		return &network_input[nerf_idx * _network_input_stride_between_nerfs];
+	NerfCoordinate* get_nerf_network_input() const {
+		return network_input;
 	}
 
 	precision_t* get_nerf_network_output(uint32_t nerf_idx) const {
