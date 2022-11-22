@@ -1010,65 +1010,6 @@ __global__ void bl_set_rays_active_kernel(
 	}
 }
 
-// compact network inputs for rays that are ready to sample
-__global__ void bl_compact_nerf_network_input_kernel(
-	const uint32_t n_rays_alive,
-	const NerfProxyRay* __restrict__ proxy_rays,
-	const NerfCoordinate* __restrict__ network_input_src,
-	NerfCoordinate* network_input_dst,
-	uint32_t* network_ray_indices,
-	uint32_t* n_compacted_network_elements
-) {
-	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
-
-	if (i >= n_rays_alive) {
-		return;
-	}
-
-	const NerfProxyRay& proxy_ray = proxy_rays[i];
-
-	if (!proxy_ray.alive || !proxy_ray.active) {
-		return;
-	}
-
-	const uint32_t idx = atomicAdd(n_compacted_network_elements, 1);
-	network_input_dst[idx] = network_input_src[i];
-	network_ray_indices[idx] = i;
-}
-
-// re-expand network inputs and outputs after sampling
-__global__ void bl_expand_nerf_network_elements(
-	const uint32_t n_compacted_network_elements,
-	const uint32_t n_rays_alive,
-	const uint32_t n_steps,
-	const uint32_t compacted_components_stride,
-	const uint32_t expanded_components_stride,
-	const uint32_t* __restrict__ network_ray_indices,
-	const NerfCoordinate* __restrict__ network_input_src,
-	NerfCoordinate* network_input_dst,
-	const network_precision_t* __restrict__ network_output_src,
-	network_precision_t* network_output_dst
-) {
-	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
-
-	if (i >= n_compacted_network_elements) {
-		return;
-	}
-	const uint32_t& idx = network_ray_indices[i];
-
-	for (uint32_t j = 0; j < n_steps; ++j) {
-		uint32_t offset_src = i + j * n_compacted_network_elements;
-		uint32_t offset_dst = idx + j * n_rays_alive;
-
-		network_output_dst[offset_dst + 0 * expanded_components_stride] = network_output_src[offset_src + 0 * compacted_components_stride];
-		network_output_dst[offset_dst + 1 * expanded_components_stride] = network_output_src[offset_src + 1 * compacted_components_stride];
-		network_output_dst[offset_dst + 2 * expanded_components_stride] = network_output_src[offset_src + 2 * compacted_components_stride];
-		network_output_dst[offset_dst + 3 * expanded_components_stride] = network_output_src[offset_src + 3 * compacted_components_stride];
-
-		network_input_dst[offset_dst] = network_input_src[offset_src];
-	}
-}
-
 __global__ void composite_kernel_nerf(
 	const uint32_t n_elements,
 	const uint32_t stride,
@@ -3032,7 +2973,7 @@ uint32_t Testbed::NerfTracer::bl_trace(
 				render_data.workspace.n_rays_alive,
 				global_rays_current,
 				render_data.workspace.get_proxy_rays(rays_current_index, j),
-				render_data.workspace.get_nerf_network_input(0, j),
+				render_data.workspace.get_nerf_network_input(j),
 				nerf.field.density_grid_bitfield.data(),
 				nerf.field.grid_size,
 				n_steps_between_compaction,
@@ -3045,8 +2986,21 @@ uint32_t Testbed::NerfTracer::bl_trace(
 				nerf.modifiers.masks.data(),
 				nerf.modifiers.masks.size()
 			);
-		}
 
+			GPUMatrix<float> positions_matrix(
+				(float*)render_data.workspace.get_nerf_network_input(j),
+				sizeof(NerfCoordinate) / sizeof(float),
+				n_network_elements
+			);
+
+			GPUMatrix<network_precision_t, RM> rgbsigma_matrix(
+				(network_precision_t*)render_data.workspace.get_nerf_network_output(j),
+				nerf.field.network->padded_output_width(),
+				n_network_elements
+			);
+
+			nerf.field.network->inference_mixed_precision(stream, positions_matrix, rgbsigma_matrix);
+		}
 
 		// at this point we filter all rays across all nerfs and select only the alive ones with the lowest t-value to pass into the network
 		linear_kernel(bl_set_rays_active_kernel, 0, stream,
@@ -3058,64 +3012,6 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			render_data.camera.transform.col(3)
 		);
 
-		CUDA_CHECK_THROW(cudaMemsetAsync(render_data.workspace.network_element_counters.data(), 0, n_nerfs * sizeof(uint32_t), stream));
-		for (uint32_t j = 0; j < n_nerfs; ++j) {
-			NerfRenderProxy& nerf = nerfs[j];
-
-			// now, for each nerf, we compact the network inputs to use only the rays that are ready to sample
-
-			linear_kernel(bl_compact_nerf_network_input_kernel, 0, stream,
-				render_data.workspace.n_rays_alive,
-				render_data.workspace.get_proxy_rays(rays_current_index, j),
-				render_data.workspace.get_nerf_network_input(0, j),
-				render_data.workspace.get_nerf_network_input(1, j),
-				render_data.workspace.get_network_ray_indices(j),
-				render_data.workspace.network_element_counters.data() + j
-			);
-		}
-
-		// fetch all the compacted network element counters values
-		CUDA_CHECK_THROW(cudaMemcpyAsync(n_compacted_network_elements.data(), render_data.workspace.network_element_counters.data(), n_nerfs * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream));
-		// do we need to sync here?
-		CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
-
-
-		for (uint32_t j = 0; j < n_nerfs; ++j) {
-			NerfRenderProxy& nerf = nerfs[j];
-
-			// now we sample each nerf's networks using the compacted elements
-			const uint32_t n_compacted_elements = next_multiple(n_compacted_network_elements.at(j), tcnn::batch_size_granularity); ;
-
-			GPUMatrix<float> positions_matrix(
-				(float*)render_data.workspace.get_nerf_network_input(1, j),
-				sizeof(NerfCoordinate) / sizeof(float),
-				n_compacted_elements
-			);
-
-			GPUMatrix<network_precision_t, RM> rgbsigma_matrix(
-				(network_precision_t*)render_data.workspace.get_nerf_network_output(1, j),
-				nerf.field.network->padded_output_width(),
-				n_compacted_elements
-			);
-
-			nerf.field.network->inference_mixed_precision(stream, positions_matrix, rgbsigma_matrix);
-
-			// then we expand the elements back to their original shape so the indexing matches up with this batch of rays
-
-			linear_kernel(bl_expand_nerf_network_elements, 0, stream,
-				n_compacted_network_elements.at(j),
-				render_data.workspace.n_rays_alive,
-				n_steps_between_compaction,
-				n_compacted_elements,
-				n_network_elements,
-				render_data.workspace.get_network_ray_indices(j),
-				render_data.workspace.get_nerf_network_input(1, j),
-				render_data.workspace.get_nerf_network_input(0, j),
-				render_data.workspace.get_nerf_network_output(1, j),
-				render_data.workspace.get_nerf_network_output(0, j)
-			);
-		}
-
 		// composite network outputs as RGBA across all nerfs, accumulating colors in render_data.workspace.global_rays[...].rgba
 		linear_kernel(bl_composite_kernel_nerf, 0, stream,
 			render_data.workspace.n_rays_alive,
@@ -3126,9 +3022,9 @@ uint32_t Testbed::NerfTracer::bl_trace(
 			proxy_rays_current,
 			render_data.workspace.get_proxy_rays_stride_between_nerfs(),
 			render_data.camera.transform.block<3, 4>(0, 0),
-			render_data.workspace.get_nerf_network_input(0, 0),
+			render_data.workspace.get_nerf_network_input(0),
 			render_data.workspace.get_network_input_stride_between_nerfs(),
-			(network_precision_t*)render_data.workspace.get_nerf_network_output(0, 0),
+			(network_precision_t*)render_data.workspace.get_nerf_network_output(0),
 			render_data.workspace.get_network_output_stride_between_nerfs(),
 			n_steps_between_compaction,
 			render_data.nerf_props.aabbs.data(),

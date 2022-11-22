@@ -38,19 +38,16 @@ private:
 	uint32_t _n_network_values;
 	uint32_t _n_input_elements;
 	uint32_t _n_output_elements;
-	uint32_t _n_network_ray_indices;
 
 	uint32_t _proxy_rays_stride_between_nerfs;
 	uint32_t _network_input_stride_between_nerfs;
 	uint32_t _network_output_stride_between_nerfs;
 
-	NerfCoordinate* network_input[2];
-	precision_t* network_output[2];
+	NerfCoordinate* network_input;
+	precision_t* network_output;
 
 	NerfProxyRay* proxy_rays[2];
 
-	uint32_t* network_ray_indices;
-	
 public:
 	NerfGlobalRay* global_rays[2];
 	NerfGlobalRay* global_rays_hit;
@@ -58,14 +55,13 @@ public:
 	tcnn::GPUMemory<uint32_t> hit_counter;
 	tcnn::GPUMemoryArena::Allocation scratch_alloc = {};
 	tcnn::GPUMemory<uint32_t> alive_counter;
-	tcnn::GPUMemory<uint32_t> network_element_counters;
 
 	uint32_t n_rays_initialized = 0;
 	uint32_t n_rays_alive = 0;
 	uint32_t min_steps_per_compaction = 1;
 	uint32_t max_steps_per_compaction = 8;
 
-	RenderDataWorkspace() : hit_counter(1), alive_counter(1), network_element_counters(0) {};
+	RenderDataWorkspace() : hit_counter(1), alive_counter(1) {};
 
 	uint32_t get_n_pixels_padded(uint32_t n_pixels) const {
 		return tcnn::next_multiple(size_t(n_pixels), size_t(tcnn::batch_size_granularity));
@@ -76,8 +72,6 @@ public:
 	}
 
 	void enlarge(uint32_t n_nerfs, uint32_t n_pixels, uint32_t padded_output_width, cudaStream_t stream) {
-
-		network_element_counters.resize(n_nerfs);
 
 		_n_nerfs = n_nerfs;
 		_n_global_rays = get_n_pixels_padded(n_pixels);
@@ -93,8 +87,6 @@ public:
 		_network_output_stride_between_nerfs = _n_network_values * padded_output_width;
 		_n_output_elements = n_nerfs * _network_output_stride_between_nerfs;
 
-		_n_network_ray_indices = n_nerfs * _n_network_values;
-
 		auto scratch = tcnn::allocate_workspace_and_distribute<
 			NerfGlobalRay,
 			NerfGlobalRay,
@@ -102,10 +94,7 @@ public:
 			NerfProxyRay,
 			NerfProxyRay,
 			NerfCoordinate,
-			NerfCoordinate,
-			precision_t,
-			precision_t,
-			uint32_t
+			precision_t
 		>(
 			stream, &scratch_alloc,
 			_n_global_rays,
@@ -114,10 +103,7 @@ public:
 			_n_proxy_rays,
 			_n_proxy_rays,
 			_n_input_elements,
-			_n_input_elements,
-			_n_output_elements,
-			_n_output_elements,
-			_n_network_ray_indices
+			_n_output_elements
 		);
 
 		global_rays[0] = std::get<0>(scratch);
@@ -127,13 +113,8 @@ public:
 		proxy_rays[0] = std::get<3>(scratch);
 		proxy_rays[1] = std::get<4>(scratch);
 
-		network_input[0] = std::get<5>(scratch);
-		network_input[1] = std::get<6>(scratch);
-
-		network_output[0] = std::get<7>(scratch);
-		network_output[1] = std::get<8>(scratch);
-
-		network_ray_indices = std::get<9>(scratch);
+		network_input = std::get<5>(scratch);
+		network_output = std::get<6>(scratch);
 	}
 
 	uint32_t get_proxy_rays_stride_between_nerfs() const {
@@ -152,12 +133,12 @@ public:
 		return _network_output_stride_between_nerfs;
 	}
 
-	NerfCoordinate* get_nerf_network_input(uint32_t buffer_idx, uint32_t nerf_idx) const {
-		return &network_input[buffer_idx][nerf_idx * _network_input_stride_between_nerfs];
+	NerfCoordinate* get_nerf_network_input(uint32_t nerf_idx) const {
+		return &network_input[nerf_idx * _network_input_stride_between_nerfs];
 	}
 
-	precision_t* get_nerf_network_output(uint32_t buffer_idx, uint32_t nerf_idx) const {
-		return &network_output[buffer_idx][nerf_idx * _network_output_stride_between_nerfs];
+	precision_t* get_nerf_network_output(uint32_t nerf_idx) const {
+		return &network_output[nerf_idx * _network_output_stride_between_nerfs];
 	}
 
 	NerfProxyRay* get_proxy_rays(uint32_t buffer_idx, uint32_t nerf_idx) const {
@@ -166,10 +147,6 @@ public:
 
 	NerfProxyRay* get_proxy_rays_buffer(uint32_t buffer_idx) const {
 		return proxy_rays[buffer_idx];
-	}
-
-	uint32_t* get_network_ray_indices(uint32_t nerf_idx) const {
-		return &network_ray_indices[nerf_idx * _n_network_values];
 	}
 
 	void clear() {
