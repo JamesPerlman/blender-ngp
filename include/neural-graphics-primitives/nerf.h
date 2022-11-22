@@ -106,4 +106,10 @@ struct NerfCoordinate {
 	NerfDirection dir;
 };
 
+struct NetworkDims {
+    uint32_t n_input;
+    uint32_t n_output;
+    uint32_t n_pos;
+};
+
 NGP_NAMESPACE_END
