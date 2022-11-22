@@ -23,7 +23,6 @@ struct NerfProxyRay {
 	Eigen::Vector3f origin;
 	Eigen::Vector3f dir;
 	float t;
-	float dt;
 	uint32_t idx;
 	uint16_t n_steps;
 	bool alive;
@@ -41,8 +40,6 @@ private:
 	uint32_t _n_output_elements;
 
 	uint32_t _proxy_rays_stride_between_nerfs;
-	uint32_t _network_input_stride_between_nerfs;
-	uint32_t _network_output_stride_between_nerfs;
 
 	NerfCoordinate* network_input;
 	precision_t* network_output;
@@ -81,12 +78,8 @@ public:
 		_n_proxy_rays = n_nerfs * _proxy_rays_stride_between_nerfs;
 
 		_n_network_values = _n_global_rays * max_steps_per_compaction;
-
-		_network_input_stride_between_nerfs = _n_network_values;
 		_n_input_elements = _n_network_values;
-
-		_network_output_stride_between_nerfs = _n_network_values * padded_output_width;
-		_n_output_elements = n_nerfs * _network_output_stride_between_nerfs;
+		_n_output_elements = _n_network_values * padded_output_width;
 
 		auto scratch = tcnn::allocate_workspace_and_distribute<
 			NerfGlobalRay,
@@ -126,20 +119,12 @@ public:
 		return _n_proxy_rays;
 	}
 
-	uint32_t get_network_input_stride_between_nerfs() const {
-		return _network_input_stride_between_nerfs;
-	}
-
-	uint32_t get_network_output_stride_between_nerfs() const {
-		return _network_output_stride_between_nerfs;
-	}
-
 	NerfCoordinate* get_nerf_network_input() const {
 		return network_input;
 	}
 
-	precision_t* get_nerf_network_output(uint32_t nerf_idx) const {
-		return &network_output[nerf_idx * _network_output_stride_between_nerfs];
+	precision_t* get_nerf_network_output() const {
+		return network_output;
 	}
 
 	NerfProxyRay* get_proxy_rays(uint32_t buffer_idx, uint32_t nerf_idx) const {
