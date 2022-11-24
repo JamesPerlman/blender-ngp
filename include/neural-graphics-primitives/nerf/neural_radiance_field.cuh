@@ -41,6 +41,8 @@
 #include <neural-graphics-primitives/random_val.cuh>
 #include <neural-graphics-primitives/nerf/nerf_descriptor.cuh>
 
+#define SQRT_3 1.73205080757f
+
 NGP_NAMESPACE_BEGIN
 
 struct NeuralRadianceField {
@@ -60,6 +62,19 @@ struct NeuralRadianceField {
     float min_optical_thickness = 0.01f;
     float min_transmittance = 0.01f;
     float cone_angle_constant = 1.0f / 256.0f; // TODO: if aabb_scale <= 1 this is 0.0f
+	uint32_t num_steps = 1024;
+
+	float get_step_size() const {
+		return SQRT_3 / num_steps;
+	}
+
+	float get_min_cone_step_size() const {
+		return get_step_size();
+	}
+
+	float get_max_cone_step_size() const {
+		return get_step_size() * (1 << (num_cascades - 1)) * num_steps / grid_size;
+	}
 
     nlohmann::json network_config = {};
 
@@ -112,7 +127,7 @@ struct NeuralRadianceField {
     // TODO:
     // const NerfTrainingConfig training_config;
 
-    inline NGP_HOST_DEVICE uint32_t grid_volume() const { return grid_size * grid_size * grid_size; };
+    inline NGP_HOST_DEVICE uint32_t get_grid_volume() const { return grid_size * grid_size * grid_size; };
 
     nlohmann::json load_snapshot_config(const ::filesystem::path& path) {
         tlog::info() << "Loading network config from: " << path;
@@ -126,7 +141,7 @@ struct NeuralRadianceField {
     }
 
     inline NGP_HOST_DEVICE uint32_t grid_mip_offset(uint32_t mip) const {
-        return grid_volume() * mip;
+        return get_grid_volume() * mip;
     }
 
     inline NGP_HOST_DEVICE uint8_t* get_density_grid_bitfield_mip(uint32_t mip) {
@@ -174,7 +189,7 @@ struct NeuralRadianceField {
         tcnn::parallel_for_gpu(density_grid_fp16.size(), [density_grid=density_grid.data(), density_grid_fp16=density_grid_fp16.data()] __device__ (size_t i) {
             density_grid[i] = (float)density_grid_fp16[i];
         });
-        if (density_grid.size() == grid_volume() * (max_cascade + 1)) {
+        if (density_grid.size() == get_grid_volume() * (max_cascade + 1)) {
             update_density_grid_mean_and_bitfield(nullptr);
         } else if (density_grid.size() != 0) {
             // A size of 0 indicates that the density grid was never populated, which is a valid state of a (yet) untrained model.

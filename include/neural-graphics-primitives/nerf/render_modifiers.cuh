@@ -35,9 +35,24 @@ public:
 		return *this;
 	}
 
-	RenderModifiers() : mask_descriptors(), masks() {}
-	RenderModifiers(const std::vector<Mask3D>& cpu_masks) : mask_descriptors(cpu_masks), masks() {}
-	RenderModifiers(const RenderModifiersDescriptor& descriptor) : RenderModifiers(descriptor.masks) {}
+	RenderModifiers() : mask_descriptors(), masks() {};
+	RenderModifiers(const std::vector<Mask3D>& cpu_masks) : mask_descriptors(cpu_masks), masks() {};
+	RenderModifiers(
+		const RenderModifiersDescriptor& descriptor,
+		const RenderModifiersDescriptor& global_modifiers,
+		const Eigen::Matrix4f& global_to_local_transform
+	) {
+		mask_descriptors.reserve(descriptor.masks.size() + global_modifiers.masks.size());
+
+		for (const Mask3D& mask : descriptor.masks) {
+			mask_descriptors.emplace_back(mask);
+		}
+
+		for (const Mask3D& global_mask : global_modifiers.masks) {
+			Mask3D local_mask = global_mask.transformed_by(global_to_local_transform);
+			mask_descriptors.emplace_back(local_mask);
+		}
+	}
 
 	void copy_from_host() {
 		if (mask_descriptors.size() == 0) {

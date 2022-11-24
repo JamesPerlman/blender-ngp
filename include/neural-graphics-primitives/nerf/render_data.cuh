@@ -20,7 +20,7 @@
 #include <neural-graphics-primitives/camera_models.cuh>
 #include <neural-graphics-primitives/common.h>
 #include <neural-graphics-primitives/nerf/nerf_render_proxy.cuh>
-#include <neural-graphics-primitives/nerf/nerf_props_gpu.cuh>
+#include <neural-graphics-primitives/nerf/nerf_props.cuh>
 #include <neural-graphics-primitives/nerf/neural_radiance_field.cuh>
 #include <neural-graphics-primitives/nerf/render_data_workspace.cuh>
 #include <neural-graphics-primitives/nerf/render_request.cuh>
@@ -40,25 +40,18 @@ public:
 
     RenderOutputProperties output;
     RenderCameraProperties camera;
-    RenderModifiers modifiers;
 	RenderDataWorkspace workspace;
-	NerfPropsGPU nerf_props;
+	tcnn::GPUMemory<NerfProps> nerf_props;
 
     RenderData() {};
 
     void update(const RenderRequest& request) {
         output = request.output;
         camera = request.camera;
-        update_modifiers(request.modifiers);
-        update_nerfs(request.nerfs);
+        update_nerfs(request.nerfs, request.modifiers);
     }
 
-    void update_modifiers(const RenderModifiersDescriptor& descriptor) {
-        // todo: improve this
-        modifiers = RenderModifiers(descriptor);
-    }
-
-    void update_nerfs(const std::vector<NerfDescriptor>& descriptors) {
+    void update_nerfs(const std::vector<NerfDescriptor>& descriptors, const RenderModifiersDescriptor& global_modifiers) {
         // delete if nerf has no matching descriptor
         static_cast<void>( // discard result from remove_if iterator
             std::remove_if(_nerfs.begin(), _nerfs.end(), [&](const NeuralRadianceField& nerf) {
@@ -94,22 +87,19 @@ public:
 				continue;
 			}
 
-			_proxies.emplace_back(desc, *nerf);
+			_proxies.emplace_back(desc, *nerf, global_modifiers);
 		}
-
-    }
-
-    void load_nerfs() {
-        for (NeuralRadianceField& nerf : _nerfs) {
-            nerf.load_snapshot();
-            // nerf.inference.enlarge_workspace(...); ?
-        }
     }
 
 	void copy_from_host() {
-		modifiers.copy_from_host();
-
-		nerf_props.copy_from_host(_proxies);
+		std::vector<NerfProps> _nerf_props;
+		_nerf_props.reserve(_nerfs.size());
+		for (NerfRenderProxy& proxy : _proxies) {
+			proxy.field.load_snapshot();
+			proxy.modifiers.copy_from_host();
+			_nerf_props.emplace_back(proxy);
+		}
+		nerf_props.resize_and_copy_from_host(_nerf_props);
 	}
 
 	std::vector<NerfRenderProxy>& get_renderables() {

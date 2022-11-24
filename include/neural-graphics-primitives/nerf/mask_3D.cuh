@@ -254,6 +254,13 @@ struct Mask3D {
 			}
         }
     };
+
+	Mask3D transformed_by(const Eigen::Matrix4f& matrix) const {
+		Mask3D copy = *this;
+		copy.transform = matrix * copy.transform;
+		return copy;
+	}
+
 };
 
 NGP_NAMESPACE_END

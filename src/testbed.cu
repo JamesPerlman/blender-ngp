@@ -2678,7 +2678,7 @@ void Testbed::bl_render_frame(
 ) {
 	render_buffer.clear_frame(m_stream.get());
 
-	bl_render_nerf(
+	m_renderer.render(
 		render_buffer,
 		render_request,
 		m_stream.get()

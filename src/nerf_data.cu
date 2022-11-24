@@ -59,7 +59,7 @@ __global__ void nerf_bitfield_max_pool(
 }
 
  void NeuralRadianceField::update_density_grid_mean_and_bitfield(cudaStream_t stream) {
-    const uint32_t n_elements = grid_volume();
+    const uint32_t n_elements = get_grid_volume();
 
     size_t size_including_mips = grid_mip_offset(num_cascades) / 8;
     density_grid_bitfield.enlarge(size_including_mips);

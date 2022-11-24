@@ -19,14 +19,18 @@ struct NerfRenderProxy {
 	BoundingBox aabb;
 	Eigen::Matrix4f transform;
 	RenderModifiers modifiers;
-	Eigen::Matrix4f render_aabb_to_local;
+	Eigen::Matrix4f itransform;
 
-	NerfRenderProxy(const NerfDescriptor& descriptor, NeuralRadianceField& nerf)
+	NerfRenderProxy(
+		const NerfDescriptor& descriptor,
+		NeuralRadianceField& nerf,
+		const RenderModifiersDescriptor& global_modifiers
+	)
 		: field(nerf)
 		, aabb(descriptor.aabb)
 		, transform(descriptor.transform)
-		, modifiers(descriptor.modifiers)
-		, render_aabb_to_local(descriptor.transform.inverse())
+		, itransform(descriptor.transform.inverse())
+		, modifiers(descriptor.modifiers, global_modifiers, itransform)
 	{};
 };
 

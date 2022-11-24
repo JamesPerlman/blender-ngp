@@ -25,6 +25,7 @@
 #include <neural-graphics-primitives/render_buffer.h>
 #include <neural-graphics-primitives/nerf/render_data.cuh>
 #include <neural-graphics-primitives/nerf/render_request.cuh>
+#include <neural-graphics-primitives/nerf/nerf_renderer.cuh>
 #include <neural-graphics-primitives/sdf.h>
 #include <neural-graphics-primitives/shared_queue.h>
 #include <neural-graphics-primitives/trainable_buffer.cuh>
@@ -559,6 +560,8 @@ public:
 	tcnn::GPUMemory<Mask3D> render_masks_gpu;
 
 	RenderData m_render_data;
+
+	NerfRenderer m_renderer;
 
 	uint32_t m_seed = 1337;
 #ifdef NGP_GUI
