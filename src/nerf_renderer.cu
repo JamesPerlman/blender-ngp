@@ -455,14 +455,13 @@ __global__ void composite_proxy_ray_colors_kernel(
 
 		Array3f rgb = get_network_rgb(proxy_network_output, rgb_activation);
 
-		// TODO: masks
-		// float mask_weight = 1.f;
+		float mask_weight = 1.f;
 
-		// for (uint32_t k = 0; k < n_render_masks; ++k) {
-		//	float mask_alpha = render_masks[k].sample(pos);
-		//	mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
-		// }
-		// weight *= mask_weight;
+		for (uint32_t k = 0; k < nerf_props->n_masks; ++k) {
+			float mask_alpha = nerf_props->masks[k].sample(pos);
+			mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
+		}
+		weight *= mask_weight;
 
 		local_rgba.head<3>() += rgb * weight;
 		local_rgba.w() += weight;
