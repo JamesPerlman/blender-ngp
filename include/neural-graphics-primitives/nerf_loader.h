@@ -80,7 +80,7 @@ struct NerfDataset {
 
 	BoundingBox render_aabb = {};
 	Eigen::Matrix3f render_aabb_to_local = Eigen::Matrix3f::Identity();
-	Eigen::Vector3f up = {0.0f, 1.0f, 0.0f};
+	Eigen::Vector3f up = {0.0f, 0.0f, 1.0f};
 	Eigen::Vector3f offset = {0.0f, 0.0f, 0.0f};
 	size_t n_images = 0;
 	Eigen::Vector2i envmap_resolution = {0, 0};
@@ -101,7 +101,6 @@ struct NerfDataset {
 	void set_training_image(int frame_idx, const Eigen::Vector2i& image_resolution, const void* pixels, const void* depth_pixels, float depth_scale, bool image_data_on_gpu, EImageDataType image_type, EDepthDataType depth_type, float sharpen_amount = 0.f, bool white_transparent = false, bool black_transparent = false, uint32_t mask_color = 0, const Ray *rays = nullptr);
 
 	Eigen::Vector3f nerf_direction_to_ngp(const Eigen::Vector3f& nerf_dir) {
-		return nerf_dir;
 		Eigen::Vector3f result = nerf_dir;
 		if (from_mitsuba) {
 			result *= -1;
@@ -112,7 +111,6 @@ struct NerfDataset {
 	}
 
 	Eigen::Matrix<float, 3, 4> nerf_matrix_to_ngp(const Eigen::Matrix<float, 3, 4>& nerf_matrix, bool scale_columns = false) const {
-		return nerf_matrix;
 		Eigen::Matrix<float, 3, 4> result = nerf_matrix;
 		result.col(0) *= scale_columns ? scale : 1.f;
 		result.col(1) *= scale_columns ? -scale : -1.f;
@@ -134,7 +132,6 @@ struct NerfDataset {
 	}
 
 	Eigen::Matrix<float, 3, 4> ngp_matrix_to_nerf(const Eigen::Matrix<float, 3, 4>& ngp_matrix, bool scale_columns = false) const {
-		return ngp_matrix;
 		Eigen::Matrix<float, 3, 4> result = ngp_matrix;
 		if (from_mitsuba) {
 			result.col(0) *= -1;
@@ -154,7 +151,6 @@ struct NerfDataset {
 	}
 
 	Eigen::Vector3f ngp_position_to_nerf(Eigen::Vector3f pos) const {
-		return pos;
 		if (!from_mitsuba) {
 			pos = Eigen::Vector3f(pos.z(), pos.x(), pos.y());
 		}
@@ -162,13 +158,11 @@ struct NerfDataset {
 	}
 
 	Eigen::Vector3f nerf_position_to_ngp(const Eigen::Vector3f &pos) const {
-		return pos;
 		Eigen::Vector3f rv = pos * scale + offset;
 		return from_mitsuba ? rv : Eigen::Vector3f(rv.y(), rv.z(), rv.x());
 	}
 
 	void nerf_ray_to_ngp(Ray& ray, bool scale_direction = false) {
-		return ray;
 		ray.o = ray.o * scale + offset;
 		if (scale_direction)
 			ray.d *= scale;

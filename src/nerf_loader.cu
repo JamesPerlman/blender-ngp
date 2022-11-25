@@ -699,8 +699,8 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			// see if there is a per-frame override
 			read_lens(frame, result.metadata[i_img].lens, result.metadata[i_img].principal_point, result.metadata[i_img].rolling_shutter);
 
-			result.xforms[i_img].start = result.xforms[i_img].start; // result.nerf_matrix_to_ngp(result.xforms[i_img].start);
-			result.xforms[i_img].end = result.xforms[i_img].end;// result.nerf_matrix_to_ngp(result.xforms[i_img].end);
+			result.xforms[i_img].start = result.nerf_matrix_to_ngp(result.xforms[i_img].start);
+			result.xforms[i_img].end = result.nerf_matrix_to_ngp(result.xforms[i_img].end);
 
 			progress.update(++n_loaded);
 		}, futures);
