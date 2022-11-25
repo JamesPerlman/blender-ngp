@@ -183,7 +183,7 @@ NerfDataset create_empty_nerf_dataset(size_t n_images, int aabb_scale, bool is_h
 	result.depthmemory.resize(n_images);
 	result.raymemory.resize(n_images);
 	result.scale = NERF_SCALE;
-	result.offset = {0.5f, 0.5f, 0.5f};
+	result.offset = {0.0f, 0.0f, 0.0f};
 	result.aabb_scale = aabb_scale;
 	result.is_hdr = is_hdr;
 	result.paths = std::vector<std::string>(n_images, "");
@@ -404,7 +404,7 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 	result.raymemory.resize(result.n_images);
 
 	result.scale = NERF_SCALE;
-	result.offset = {0.5f, 0.5f, 0.5f};
+	result.offset = {0.0f, 0.0f, 0.0f};
 
 	std::vector<std::future<void>> futures;
 
@@ -699,8 +699,8 @@ NerfDataset load_nerf(const std::vector<filesystem::path>& jsonpaths, float shar
 			// see if there is a per-frame override
 			read_lens(frame, result.metadata[i_img].lens, result.metadata[i_img].principal_point, result.metadata[i_img].rolling_shutter);
 
-			result.xforms[i_img].start = result.nerf_matrix_to_ngp(result.xforms[i_img].start);
-			result.xforms[i_img].end = result.nerf_matrix_to_ngp(result.xforms[i_img].end);
+			result.xforms[i_img].start = result.xforms[i_img].start; // result.nerf_matrix_to_ngp(result.xforms[i_img].start);
+			result.xforms[i_img].end = result.xforms[i_img].end;// result.nerf_matrix_to_ngp(result.xforms[i_img].end);
 
 			progress.update(++n_loaded);
 		}, futures);

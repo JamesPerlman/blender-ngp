@@ -1218,6 +1218,7 @@ __global__ void generate_training_samples_nerf(
 			t = advance_to_next_voxel(t, cone_angle, pos, ray_d_normalized, idir, res);
 		}
 	}
+
 	if (j == 0 && !train_envmap) {
 		return;
 	}
