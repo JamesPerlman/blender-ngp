@@ -237,6 +237,38 @@ __global__ void march_proxy_rays_init_kernel(
 	proxy_ray.t = t;
 }
 
+__global__ void compact_rays_kernel(
+	uint32_t n_elements,
+	NerfGlobalRay* global_src_rays,
+	NerfGlobalRay* global_dst_rays,
+	NerfProxyRay* proxy_src_rays,
+	NerfProxyRay* proxy_dst_rays,
+	uint32_t n_nerfs,
+	uint32_t proxy_rays_stride_between_nerfs,
+	NerfGlobalRay* global_final_rays,
+	uint32_t* global_alive_counter,
+	uint32_t* global_final_counter
+) {
+
+	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= n_elements) return;
+
+	NerfGlobalRay& global_src_ray = global_src_rays[i];
+
+	if (global_src_ray.alive) {
+		uint32_t idx = atomicAdd(global_alive_counter, 1);
+		global_dst_rays[idx] = global_src_ray;
+		for (uint32_t n = 0; n < n_nerfs; ++n) {
+			uint32_t offset = n * proxy_rays_stride_between_nerfs;
+			proxy_dst_rays[idx + offset] = proxy_src_rays[i + offset];
+		}
+	}
+	else if (global_src_ray.rgba.w() > 0.001f) {
+		uint32_t idx = atomicAdd(global_final_counter, 1);
+		global_final_rays[idx] = global_src_ray;
+	}
+}
+
 // march rays until the moment they become active - does not do marching per step, only marches each ray once until it hits its next sample point
 
 __global__ void march_active_rays(
@@ -521,43 +553,11 @@ __global__ void shade_buffer_with_rays_kernel(
 				continue;
 			}
 
-			frame_buffer[idx] = tmp + frame_buffer[idx] * (1.0f - tmp.w()); //  Array4f(float(x) / float(ds.scaled_res.x()), float(y) / float(ds.scaled_res.y()), 1.0f, 1.0f);
+			frame_buffer[idx] = tmp + frame_buffer[idx] * (1.0f - tmp.w());
 			if (tmp.w() > 0.2f) {
 				depth_buffer[idx] = ray.depth;
 			}
 		}
-	}
-}
-
-__global__ void compact_rays_kernel(
-	uint32_t n_elements,
-	NerfGlobalRay* global_src_rays,
-	NerfGlobalRay* global_dst_rays,
-	NerfProxyRay* proxy_src_rays,
-	NerfProxyRay* proxy_dst_rays,
-	uint32_t n_nerfs,
-	uint32_t proxy_rays_stride_between_nerfs,
-	NerfGlobalRay* global_final_rays,
-	uint32_t* global_alive_counter,
-	uint32_t* global_final_counter
-) {
-
-	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
-	if (i >= n_elements) return;
-
-	NerfGlobalRay& global_src_ray = global_src_rays[i];
-
-	if (global_src_ray.alive) {
-		uint32_t idx = atomicAdd(global_alive_counter, 1);
-		global_dst_rays[idx] = global_src_ray;
-		for (uint32_t n = 0; n < n_nerfs; ++n) {
-			uint32_t offset = n * proxy_rays_stride_between_nerfs;
-			proxy_dst_rays[idx + offset] = proxy_src_rays[i + offset];
-		}
-	}
-	else if (global_src_ray.rgba.w() > 0.001f) {
-		uint32_t idx = atomicAdd(global_final_counter, 1);
-		global_final_rays[idx] = global_src_ray;
 	}
 }
 
