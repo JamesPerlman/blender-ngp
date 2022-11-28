@@ -1,13 +1,3 @@
-/*
- * Copyright (c) 2020-2022, NVIDIA CORPORATION.  All rights reserved.
- *
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
- */
-
 /** @file   render_data.cuh
  * 
  *  @author James Perlman, avid instant-ngp fan
@@ -94,6 +84,22 @@ struct RenderCameraProperties {
     {};
     
     RenderCameraProperties() = default;
+
+    // equality operator
+    bool operator==(const RenderCameraProperties& other) const {
+        return transform == other.transform
+            && model == other.model
+            && focal_length == other.focal_length
+            && near_distance == other.near_distance
+            && aperture_size == other.aperture_size
+            && focus_z == other.focus_z
+            && spherical_quadrilateral == other.spherical_quadrilateral
+            && quadrilateral_hexahedron == other.quadrilateral_hexahedron;
+    }
+
+    bool operator!=(const RenderCameraProperties& other) const {
+        return !(*this == other);
+    }
 };
 
 struct RenderRequest {

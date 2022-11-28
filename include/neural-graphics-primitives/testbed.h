@@ -423,10 +423,11 @@ public:
 		RenderRequest& render_request,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
-	void bl_request_nerf_render(
+	void bl_request_nerf_render_async(
 		RenderRequest render_request,
 		const std::function<void(pybind11::array_t<float>)> &render_callback
 	);
+	pybind11::array_t<float> bl_request_nerf_render_sync(RenderRequest render_request);
 #endif
 
 	double calculate_iou(uint32_t n_samples=128*1024*1024, float scale_existing_results_factor=0.0, bool blocking=true, bool force_use_octree = true);

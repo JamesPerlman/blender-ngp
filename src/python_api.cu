@@ -25,6 +25,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <pybind11_json/pybind11_json.hpp>
+#include <pybind11/operators.h>
 
 #include <filesystem/path.h>
 #include <functional>
@@ -210,7 +211,7 @@ void Testbed::bl_nerf_render_thread(
 // starts a chain of renders to procedurally generate higher resolution images
 // right now this requires CUDA to copy all the RenderData into the GPU for every rendered frame (minus the snapshots).
 // It would be wise to refactor this to only copy the data that changes between frames.
-void Testbed::bl_request_nerf_render(
+void Testbed::bl_request_nerf_render_async(
 	RenderRequest render_request,
 	const std::function<void(py::array_t<float>)> &render_callback
 ) {
@@ -227,6 +228,36 @@ void Testbed::bl_request_nerf_render(
 	//bl_nerf_render_thread(result, render_request, render_callback);
 	m_render_thread = std::thread(&Testbed::bl_nerf_render_thread, this, result, render_request, render_callback);
 	m_render_thread.detach();
+}
+
+py::array_t<float> Testbed::bl_request_nerf_render_sync(RenderRequest render_request) {
+	py::array_t<float> result({ render_request.output.resolution.y(), render_request.output.resolution.x(), 4 });
+	if (m_currently_rendering) {
+		return result;
+	}
+	m_currently_rendering = true;
+
+	if (m_autofocus) {
+		autofocus();
+	}
+
+	//bl_nerf_render_thread(result, render_request, render_callback);
+
+	CudaRenderBuffer render_buffer{ std::make_shared<CudaSurface2D>() };
+	size_t width = render_request.output.resolution.x();
+	size_t height = render_request.output.resolution.y();
+	render_buffer.resize({ (int)width, (int)height });
+	render_buffer.reset_accumulation();
+
+	bl_render_frame(render_buffer, render_request);
+
+	py::buffer_info output_buffer = result.request();
+
+	CUDA_CHECK_THROW(cudaMemcpy2DFromArray(output_buffer.ptr, width * sizeof(float) * 4, render_buffer.surface_provider().array(), 0, 0, width * sizeof(float) * 4, height, cudaMemcpyDeviceToHost));
+
+	m_currently_rendering = false;
+
+	return result;
 }
 
 py::array_t<float> Testbed::render_with_rolling_shutter_to_cpu(const Eigen::Matrix<float, 3, 4>& camera_transform_start, const Eigen::Matrix<float, 3, 4>& camera_transform_end, const Eigen::Vector4f& rolling_shutter, int width, int height, int spp, bool linear) {
@@ -469,6 +500,8 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("spherical_quadrilateral"),
 			py::arg("quadrilateral_hexahedron")
 		)
+		.def(py::self == py::self)
+		.def(py::self != py::self)
 		;
 
 	py::class_<NerfDescriptor>(m, "NerfDescriptor")
@@ -539,9 +572,12 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("fps") = 30.f,
 			py::arg("shutter_fraction") = 1.0f
 		)
-		.def("request_nerf_render", &Testbed::bl_request_nerf_render, "Requests a nerf render frame.",
+		.def("request_nerf_render_async", &Testbed::bl_request_nerf_render_async, "Requests a nerf render frame.",
 			py::arg("render_request"),
 			py::arg("render_callback")
+		)
+		.def("request_nerf_render_sync", &Testbed::bl_request_nerf_render_sync, "Requests a nerf render frame.",
+			py::arg("render_request")
 		)
 		.def("render_with_rolling_shutter", &Testbed::render_with_rolling_shutter_to_cpu, "Renders an image at the requested resolution. Does not require a window. Supports rolling shutter, with per ray time being computed as A+B*u+C*v+D*t for [A,B,C,D]",
 			py::arg("transform_matrix_start"),

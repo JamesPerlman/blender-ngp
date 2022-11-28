@@ -45,6 +45,14 @@ struct Quadrilateral3D {
     Eigen::Vector3f center() const {
         return (tl + tr + bl + br) / 4.0f;
     };
+
+	bool operator==(const Quadrilateral3D& other) const {
+		return tl == other.tl && tr == other.tr && bl == other.bl && br == other.br;
+	};
+
+	bool operator!=(const Quadrilateral3D& other) const {
+		return !(*this == other);
+	};
 };
 
 struct QuadrilateralHexahedron {
@@ -60,6 +68,13 @@ struct QuadrilateralHexahedron {
     Eigen::Vector3f center() const {
         return (front.center() + back.center()) / 2.0f;
     };
+
+	bool operator==(const QuadrilateralHexahedron& other) const {
+		return front == other.front && back == other.back;
+	};
+	bool operator!=(const QuadrilateralHexahedron& other) const {
+		return !(*this == other);
+	};
 };
 
 inline NGP_HOST_DEVICE Ray quadrilateral_hexahedron_pixel_to_ray(
@@ -110,9 +125,14 @@ struct SphericalQuadrilateral {
 	NGP_HOST_DEVICE static SphericalQuadrilateral Zero() {
 		return SphericalQuadrilateral(0.0f, 0.0f, 0.0f);
 	};
+
+	bool operator==(const SphericalQuadrilateral& other) const {
+		return width == other.width && height == other.height && curvature == other.curvature;
+	};
+	bool operator!=(const SphericalQuadrilateral& other) const {
+		return !(*this == other);
+	};
 };
-
-
 
 inline NGP_HOST_DEVICE Eigen::Vector2f walk_along_circle(float curvature, float linear_len, float arc_len)
 {
