@@ -573,6 +573,8 @@ void NerfRenderer::render(
 	m_render_data.update(render_request);
 	m_render_data.copy_from_host();
 
+	CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+
 	std::vector<NerfRenderProxy>& nerfs = m_render_data.get_renderables();
 
 	ScopeGuard tmp_memory_guard{ [&]() {
