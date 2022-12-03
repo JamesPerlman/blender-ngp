@@ -798,7 +798,6 @@ __global__ void composite_kernel_nerf(
 	NerfPayload& payload = payloads[i];
 	float x = (float)threadIdx.x / (float)blockDim.x;
 	float y = (float)blockIdx.x / (float)blockDim.y;
-	rgba[i] = Vector4f(x, 0.0f, y, 1.0f);
 
 	if (!payload.alive) {
 		return;
