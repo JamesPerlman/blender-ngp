@@ -38,6 +38,8 @@ IMAGE_DATA_FOLDER = os.path.join(NGP_DATA_FOLDER, "image")
 VOLUME_DATA_FOLDER = os.path.join(NGP_DATA_FOLDER, "volume")
 
 # Search for pyngp in the build folder.
+sys.path += [os.path.dirname(pyd) for pyd in glob.iglob(os.path.join(ROOT_DIR, "build*", "**/*.pyd"), recursive=True)]
+sys.path += [os.path.dirname(pyd) for pyd in glob.iglob(os.path.join(ROOT_DIR, "build*", "**/*.so"), recursive=True)]
 sys.path += [os.path.dirname(pyd) for pyd in glob.iglob(os.path.join(ROOT_DIR, "out/build*", "**/*.pyd"), recursive=True)]
 sys.path += [os.path.dirname(pyd) for pyd in glob.iglob(os.path.join(ROOT_DIR, "out/build*", "**/*.so"), recursive=True)]
 
