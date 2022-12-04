@@ -26,6 +26,7 @@ struct NerfProps {
 	float min_cone_stepsize;
 	float max_cone_stepsize;
 	uint32_t nerf_cascades;
+	float opacity;
 
 	NerfProps(const NerfRenderProxy& nerf)
 		: transform(nerf.transform)
@@ -41,6 +42,7 @@ struct NerfProps {
 		, min_cone_stepsize(nerf.field.get_min_cone_step_size())
 		, max_cone_stepsize(nerf.field.get_max_cone_step_size())
 		, nerf_cascades(nerf.field.num_cascades)
+		, opacity(nerf.opacity)
 	{};
 
 };

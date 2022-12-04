@@ -509,12 +509,14 @@ PYBIND11_MODULE(pyngp, m) {
 				const std::string&,
 				const BoundingBox&,
 				const Matrix4f&,
-				const RenderModifiersDescriptor&
+				const RenderModifiersDescriptor&,
+				const float&
 			>(),
 			py::arg("snapshot_path_str"),
 			py::arg("aabb"),
 			py::arg("transform"),
-			py::arg("modifiers")
+			py::arg("modifiers"),
+			py::arg("opacity")
 		)
 		;
 

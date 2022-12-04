@@ -20,6 +20,7 @@ struct NerfRenderProxy {
 	Eigen::Matrix4f transform;
 	RenderModifiers modifiers;
 	Eigen::Matrix4f itransform;
+	float opacity;
 
 	NerfRenderProxy(
 		const NerfDescriptor& descriptor,
@@ -31,6 +32,7 @@ struct NerfRenderProxy {
 		, transform(descriptor.transform)
 		, itransform(descriptor.transform.inverse())
 		, modifiers(descriptor.modifiers, global_modifiers, itransform)
+		, opacity(descriptor.opacity)
 	{};
 };
 

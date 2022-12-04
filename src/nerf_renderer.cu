@@ -494,6 +494,7 @@ __global__ void composite_proxy_ray_colors_kernel(
 			mask_weight = tcnn::clamp(mask_weight + mask_alpha, 0.0f, 1.0f);
 		}
 		weight *= mask_weight;
+		weight *= nerf_props->opacity;
 
 		local_rgba.head<3>() += rgb * weight;
 		local_rgba.w() += weight;

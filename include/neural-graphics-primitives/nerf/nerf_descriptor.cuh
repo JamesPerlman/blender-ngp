@@ -17,17 +17,20 @@ struct NerfDescriptor {
     BoundingBox aabb;
     Eigen::Matrix4f transform;
     RenderModifiersDescriptor modifiers;
+	float opacity;
 
     NerfDescriptor(
         const std::string& snapshot_path_str,
         const BoundingBox& aabb,
         const Eigen::Matrix4f& transform,
-        const RenderModifiersDescriptor& modifiers
+        const RenderModifiersDescriptor& modifiers,
+		const float& opacity
     )
         : snapshot_path(snapshot_path_str)
         , aabb(aabb)
         , modifiers(modifiers)
         , transform(transform)
+		, opacity(opacity)
     {};
 };
 
